@@ -80,12 +80,34 @@ anomaly:              # only read if features.ml is true - DESIGN/06 §6.2,
   lag_n: 5                   # lagged values per feature vector
   score_threshold: 99        # 0..100 - anomaly score cutoff
 
-backup:               # only read if features.backup is true
-  mode: pull           # push | pull
-  schedule: "*/15 * * * *"
+backup:               # only read if features.backup is true - DESIGN/07, RELEASE/v0.7.0.md
+  mode: pull           # push | pull - see DESIGN/07 §7.3 for the tradeoff
+  node_id: ""          # identifies this node in exported rows; defaults to os.Hostname() if unset
+  # schedule/catalog are only required in mode: push (this process writes to
+  # Iceberg itself) or when this file is `circa backup-agent`'s own config
+  # (the pull-mode central poller, see backup.nodes below) - a plain
+  # mode: pull node just serves GET /api/v1/backup_range and never touches
+  # the catalog, so it can leave schedule/catalog unset.
+  schedule: "*/15 * * * *"   # cron syntax (github.com/robfig/cron/v3)
   catalog:
     uri: https://iceberg-catalog.internal:8181
     warehouse: s3://metrics-lake/circa
+    # s3_endpoint/s3_region are only needed for a self-hosted S3-compatible
+    # warehouse (MinIO, etc.) rather than real AWS S3. Credentials are never
+    # config fields - set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (the AWS
+    # SDK's own default credential chain) as env vars instead, and
+    # CIRCA_BACKUP_CATALOG_TOKEN if the REST catalog itself needs a bearer
+    # token separate from S3 auth.
+    s3_endpoint: ""
+    s3_region: "us-east-1"
+  # nodes is only read by `circa backup-agent` (mode: pull's central
+  # poller) - the node URLs to pull GET /api/v1/backup_range from. A
+  # regular node running mode: pull doesn't read this itself.
+  nodes: []
+  # nodes:
+  #   - url: http://node1.internal:9100
+  #     username: ""   # optional, if that node has auth.users set
+  #     password: ""
 
 push:
   receive:            # only read if features.push_receive is true

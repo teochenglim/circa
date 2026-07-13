@@ -119,24 +119,27 @@ func OpenTiered(dir string, rawRetention, minuteRetention, hourRetention time.Du
 // tier, then folded into the open minute/hour bucket for its series,
 // flushing the previous bucket's min/avg/max into that tier's store when
 // time has moved into a new bucket.
-func (ts *TieredStore) Consume(sample ingest.Sample) error {
+func (ts *TieredStore) Consume(sample ingest.Sample) (err error) {
+	start := time.Now()
+	defer func() { observeWrite(start, err) }()
+
 	interval := sample.Interval
 	if interval <= 0 {
 		interval = time.Second
 	}
 	key := SeriesKey{Name: sample.Name, Labels: sample.Labels}
 
-	if err := ts.Raw.Append(key, interval, sample.Time, sample.Value, sample.Anomalous); err != nil {
+	if err = ts.Raw.Append(key, interval, sample.Time, sample.Value, sample.Anomalous); err != nil {
 		return err
 	}
 
 	if ts.Minute != nil {
-		if err := ts.rollup(ts.Minute, ts.minuteAcc, key, minuteInterval, sample.Time, sample.Value); err != nil {
+		if err = ts.rollup(ts.Minute, ts.minuteAcc, key, minuteInterval, sample.Time, sample.Value); err != nil {
 			return err
 		}
 	}
 	if ts.Hour != nil {
-		if err := ts.rollup(ts.Hour, ts.hourAcc, key, hourInterval, sample.Time, sample.Value); err != nil {
+		if err = ts.rollup(ts.Hour, ts.hourAcc, key, hourInterval, sample.Time, sample.Value); err != nil {
 			return err
 		}
 	}
@@ -196,6 +199,10 @@ func appendAgg(store *Store, key SeriesKey, interval time.Duration, t time.Time,
 // [start, end]. TierRaw returns single-valued points; TierMinute/TierHour
 // return min/avg/max triplets zipped from that tier's three sub-series.
 func (ts *TieredStore) QueryRange(name string, match map[string]string, tier Tier, start, end time.Time) ([]SeriesResult, []AggSeriesResult, error) {
+	defer func(t0 time.Time) {
+		queryDuration.WithLabelValues(tierLabel(tier)).Observe(time.Since(t0).Seconds())
+	}(time.Now())
+
 	switch tier {
 	case TierRaw:
 		results, err := ts.Raw.QueryRange(name, match, start, end)

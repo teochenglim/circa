@@ -36,6 +36,18 @@ data:
         minute: {{ .Values.storage.retention.minute }}
         hour: {{ .Values.storage.retention.hour }}
 
+    {{- if .Values.backup }}
+    backup:
+      mode: {{ .Values.backup.mode }}
+      node_id: {{ .Values.backup.nodeId | default "" | quote }}
+      schedule: {{ .Values.backup.schedule | quote }}
+      catalog:
+        uri: {{ .Values.backup.catalog.uri | quote }}
+        warehouse: {{ .Values.backup.catalog.warehouse | quote }}
+        s3_endpoint: {{ .Values.backup.catalog.s3Endpoint | default "" | quote }}
+        s3_region: {{ .Values.backup.catalog.s3Region | default "us-east-1" | quote }}
+    {{- end }}
+
     {{- if .Values.auth.users }}
     auth:
       users:

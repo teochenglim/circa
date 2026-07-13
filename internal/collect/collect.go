@@ -69,7 +69,9 @@ func (c *Collector) Run(ctx context.Context, interval time.Duration) {
 }
 
 func (c *Collector) collectOnce(interval time.Duration) {
-	samples, err := collectAll(time.Now(), interval)
+	start := time.Now()
+	samples, err := collectAll(start, interval)
+	observeCollect(start, len(samples), err)
 	if err != nil {
 		c.logger.Warn("local system collection failed", "error", err)
 		return

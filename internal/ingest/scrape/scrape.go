@@ -87,7 +87,9 @@ func (s *Scraper) runTarget(ctx context.Context, t Target) {
 }
 
 func (s *Scraper) scrapeOnce(ctx context.Context, t Target) {
+	start := time.Now()
 	samples, err := s.fetch(ctx, t)
+	observeScrape(t.URL, start, err)
 	if err != nil {
 		s.logger.Warn("scrape failed", "target", t.URL, "error", err)
 		return

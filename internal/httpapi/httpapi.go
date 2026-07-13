@@ -1,8 +1,8 @@
 // Package httpapi wires circa's HTTP routes: /api/v1/query_range,
-// /api/v1/series, /api/v1/alerts, /api/v1/anomalies, /status, /healthz,
-// /readyz, the dashboard (/, /static/*) from the web package, and — when
-// enabled — the remote-write receiver. /metrics arrives in a later
-// milestone per RELEASE.md.
+// /api/v1/series, /api/v1/alerts, /api/v1/anomalies, /metrics, /status,
+// /healthz, /readyz, the dashboard (/, /static/*) from the web package,
+// and — when enabled — the remote-write receiver and (pull-mode backup)
+// /api/v1/backup_range.
 package httpapi
 
 import (
@@ -40,6 +40,11 @@ type Options struct {
 	// AlertEngine backs GET /api/v1/alerts when non-nil (features.alerts
 	// on); nil means the endpoint always returns an empty list.
 	AlertEngine *alert.Engine
+	// NodeID and Hostname identify this node in GET /api/v1/backup_range's
+	// output (DESIGN/07 §7.4) — only meaningful, and only registered, when
+	// Config.Features.Backup and Config.Backup.Mode == "pull".
+	NodeID   string
+	Hostname string
 }
 
 // NewRouter builds the HTTP handler for circa's API surface and dashboard.
@@ -53,6 +58,7 @@ func NewRouter(engine *query.Engine, opts Options) http.Handler {
 	protected.HandleFunc("GET /api/v1/series", seriesHandler(engine))
 	protected.HandleFunc("GET /api/v1/alerts", alertsHandler(opts.AlertEngine))
 	protected.HandleFunc("GET /api/v1/anomalies", anomaliesHandler(engine))
+	protected.HandleFunc("GET /metrics", metricsHandler(engine))
 	protected.HandleFunc("GET /status", statusHandler(opts.Config))
 	if opts.WriteReceiver != nil {
 		path := opts.Config.Push.Receive.Path
@@ -61,13 +67,20 @@ func NewRouter(engine *query.Engine, opts Options) http.Handler {
 		}
 		protected.Handle("POST "+path, opts.WriteReceiver)
 	}
+	if opts.Config.Features.Backup && opts.Config.Backup.Mode == "pull" {
+		protected.HandleFunc("GET /api/v1/backup_range", backupRangeHandler(engine, opts.NodeID, opts.Hostname))
+	}
 	protected.Handle("/", web.Handler())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthzHandler)
 	mux.HandleFunc("GET /readyz", healthzHandler)
 	mux.Handle("/", auth.Middleware(opts.Config.Auth.Users, protected))
-	return mux
+
+	// instrumentHTTP wraps everything, including /healthz/readyz and
+	// anything auth rejects, so circa's own RED self-metrics (selfmetrics.go)
+	// reflect every request circa actually receives.
+	return instrumentHTTP(mux)
 }
 
 // alertsHandler serves GET /api/v1/alerts — every currently-firing alert.

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/teochenglim/circa/internal/alert"
 	"github.com/teochenglim/circa/internal/alert/notify"
 	"github.com/teochenglim/circa/internal/anomaly"
+	"github.com/teochenglim/circa/internal/backup"
 	"github.com/teochenglim/circa/internal/collect"
 	"github.com/teochenglim/circa/internal/config"
 	"github.com/teochenglim/circa/internal/httpapi"
@@ -37,6 +39,9 @@ func main() {
 			return
 		case "auth":
 			exitOnError(runAuth(os.Args[2:]))
+			return
+		case "backup-agent":
+			exitOnError(runBackupAgent(os.Args[2:]))
 			return
 		}
 	}
@@ -197,12 +202,41 @@ func run(configPath string, logger *slog.Logger) error {
 		go sender.Run(ctx, time.Duration(cfg.Push.Send.Interval))
 	}
 
+	// Backup is feature-flagged off by default (DESIGN/07). Push mode
+	// writes directly to Iceberg from this process on its own cron
+	// schedule; pull mode's central poller is the separate `circa
+	// backup-agent` role (backup_cli.go) — a plain mode: pull node here
+	// only needs to *serve* GET /api/v1/backup_range (wired into
+	// httpapi.Options below), it never touches the catalog itself. A
+	// broken catalog connection in push mode fails startup loudly, per
+	// this project's own "bad config fails at startup" convention
+	// (config.Load's doc comment) — DESIGN/07 §7.6's resilience-to-outage
+	// story is about a *transient* mid-run failure, not a wrong URI at boot.
+	hostname, _ := os.Hostname()
+	if cfg.Features.Backup && cfg.Backup.Mode == "push" {
+		writer, err := backup.NewIcebergWriter(ctx, cfg.Backup.Catalog.URI, cfg.Backup.Catalog.Warehouse,
+			cfg.Backup.Catalog.S3Endpoint, cfg.Backup.Catalog.S3Region, os.Getenv("CIRCA_BACKUP_CATALOG_TOKEN"))
+		if err != nil {
+			return fmt.Errorf("backup: connecting to iceberg catalog: %w", err)
+		}
+		watermarks := backup.NewWatermarkStore(filepath.Join(cfg.Storage.Path, "backup_watermark.json"))
+		source := &backup.LocalSource{Engine: engine, NodeID: cfg.Backup.NodeID, Hostname: hostname}
+		exporter := backup.NewExporter(source, writer, watermarks, logger)
+		go func() {
+			if err := exporter.Run(ctx, cfg.Backup.Schedule); err != nil {
+				logger.Error("backup exporter exited", "error", err)
+			}
+		}()
+	}
+
 	server := &http.Server{
 		Addr: cfg.Server.ListenAddress,
 		Handler: httpapi.NewRouter(engine, httpapi.Options{
 			Config:        cfg,
 			WriteReceiver: writeReceiver,
 			AlertEngine:   alertEngine,
+			NodeID:        cfg.Backup.NodeID,
+			Hostname:      hostname,
 		}),
 	}
 
@@ -211,7 +245,8 @@ func run(configPath string, logger *slog.Logger) error {
 		logger.Info("circa listening", "address", cfg.Server.ListenAddress, "targets", len(targets),
 			"collect", cfg.CollectEnabled() && collect.Supported(), "auth", len(cfg.Auth.Users) > 0,
 			"push_receive", cfg.Features.PushReceive, "push_send", cfg.Features.PushSend,
-			"alerts", cfg.Features.Alerts, "ml", cfg.Features.ML)
+			"alerts", cfg.Features.Alerts, "ml", cfg.Features.ML,
+			"backup", cfg.Features.Backup, "backup_mode", cfg.Backup.Mode)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serveErr <- err
 		}

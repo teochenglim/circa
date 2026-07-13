@@ -59,7 +59,9 @@ func (e *Engine) Consume(sample ingest.Sample) error {
 		if !labelsMatch(sample.Labels, rule.Labels) {
 			continue
 		}
+		start := time.Now()
 		e.evaluate(rule, sample)
+		observeEvaluation(rule.Name, start)
 	}
 	return nil
 }
@@ -168,7 +170,10 @@ func (e *Engine) dispatch(rule Rule, sample ingest.Sample, since time.Time, firi
 		if !ok {
 			continue
 		}
-		if err := n.Notify(a); err != nil {
+		start := time.Now()
+		err := n.Notify(a)
+		observeNotify(name, start, err)
+		if err != nil {
 			e.logger.Warn("alert notify failed", "notifier", name, "rule", rule.Name, "error", err)
 		}
 	}

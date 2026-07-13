@@ -180,12 +180,19 @@ anomaly:              # only read if features.ml is true - DESIGN/06 §6.2,
   lag_n: {{.AnomalyLagN}}                        # lagged values per feature vector
   score_threshold: {{.AnomalyScoreThreshold}}    # 0..100 - anomaly score cutoff
 
-backup:               # only read if features.backup is true
-  mode: pull           # push | pull
+backup:               # only read if features.backup is true - DESIGN/07, RELEASE/v0.7.0.md
+  mode: pull           # push | pull - see DESIGN/07 §7.3
+  node_id: ""          # defaults to os.Hostname() if unset
+  # schedule/catalog are only required for mode: push, or for a separate
+  # circa backup-agent config (pull mode's central poller, see backup.nodes
+  # below) - a plain mode: pull node just serves GET /api/v1/backup_range.
   schedule: "*/15 * * * *"
   catalog:
     uri: https://iceberg-catalog.internal:8181
     warehouse: s3://metrics-lake/circa
+    s3_endpoint: ""      # only for a self-hosted S3-compatible warehouse (MinIO, etc.)
+    s3_region: "us-east-1"
+  nodes: []              # only read by circa backup-agent - node URLs to pull from
 
 push:
   receive:            # only read if features.push_receive is true

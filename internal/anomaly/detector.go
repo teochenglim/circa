@@ -96,6 +96,8 @@ func (d *Detector) ensembleFor(key storage.SeriesKey) *ensemble {
 // vector, or no model has trained yet — a cold-start series never falsely
 // flags anomalies before it has a baseline.
 func (d *Detector) Score(key storage.SeriesKey, value float64) bool {
+	defer observeScore(time.Now())
+
 	e := d.ensembleFor(key)
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -172,11 +174,18 @@ func (d *Detector) retrainDueSeries(tick int) {
 }
 
 func (d *Detector) retrainOne(key storage.SeriesKey, now time.Time) {
+	start := time.Now()
+
 	results, _, err := d.reader.QueryRange(key.Name, key.Labels, storage.TierRaw, query.Range{
 		Start: now.Add(-d.cfg.TrainingWindow),
 		End:   now,
 	})
-	if err != nil || len(results) == 0 {
+	if err != nil {
+		observeRetrain(start, "error")
+		return
+	}
+	if len(results) == 0 {
+		observeRetrain(start, "skipped")
 		return
 	}
 
@@ -186,14 +195,17 @@ func (d *Detector) retrainOne(key storage.SeriesKey, now time.Time) {
 	}
 	vectors := Preprocess(values, d.cfg.DiffN, d.cfg.SmoothN, d.cfg.LagN)
 	if len(vectors) < 2 {
+		observeRetrain(start, "skipped")
 		return
 	}
 
 	model, err := Train(vectors)
 	if err != nil {
+		observeRetrain(start, "error")
 		d.logger.Warn("anomaly model training failed", "series", key.String(), "error", err)
 		return
 	}
+	observeRetrain(start, "ok")
 
 	e := d.ensembleFor(key)
 	e.mu.Lock()

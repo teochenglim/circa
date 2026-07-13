@@ -31,22 +31,24 @@ on)             targets,
    ┌──────────────┼──────────────┬──────────────┐
 internal/          internal/     internal/      internal/
 storage            alert         anomaly        backup
-[BUILT: tier-0/     [BUILT:       [BUILT:        [planned,
+[BUILT: tier-0/     [BUILT:       [BUILT:        [BUILT:
 1/2, Gorilla        v0.4.0]       v0.4.0]        v0.7.0]
 compression,
 anomaly bit]
 (RRD tiers,        (rule engine, (k-means        (CDC export
-Gorilla             notifiers,   ensemble,       to Iceberg,
-compression,        feature-     anomaly bit     watermark-
-LSB anomaly         flagged)     embedded in     driven,
-bit trick)                       storage,        feature-
-                                 feature-        flagged)
+Gorilla             notifiers,   ensemble,       to Iceberg via
+compression,        feature-     anomaly bit     apache/iceberg-go,
+LSB anomaly         flagged)     embedded in     watermark-driven,
+bit trick)                       storage,        push+pull modes,
+                                 feature-        feature-flagged)
                                  flagged)
                   │
-internal/config             — [BUILT: v0.4.0] single YAML file, full schema + cross-field Validate() incl. alerting/anomaly; `circa config init`/`check` (cmd/circa/config_cli.go)
+internal/config             — [BUILT: v0.7.0] single YAML file, full schema + cross-field Validate() incl. alerting/anomaly/backup; `circa config init`/`check` (cmd/circa/config_cli.go), `circa backup-agent` (cmd/circa/backup_cli.go)
 internal/auth                — [BUILT: v0.3.0] optional multi-user bcrypt basic auth, no-auth default; `circa auth add-user`/`reset-password` (cmd/circa/auth_cli.go)
 web/                           — [BUILT: v0.6.0] 8 pages (Overall + one per collector category + Metrics), static HTML/CSS/JS, uPlot, embedded via go:embed
 ```
+
+Every package above (and every `internal/ingest/*` source) also registers its own RED (rate/errors/duration) self-metrics as of v0.7.0 — see "Self-metrics" below.
 
 `internal/storage`'s compression is a from-scratch Gorilla-style bit-packer (`gorilla.go`/`bitstream.go`), not mmap — see [RELEASE/v0.2.0.md](RELEASE/v0.2.0.md) for why mmap was skipped and the actual compression ratio measured. Tier-1/tier-2 rollups (`tiered.go`) are stored as three ordinary series per real metric (`#min`/`#avg`/`#max`), reusing the tier-0 engine rather than a shared-timestamp triplet format — also a deliberate v0.2.0 simplification. As of v0.4.0, `internal/storage` also carries the anomaly bit (`anomalybit.go`) — see [DESIGN/06](DESIGN/06_design_alerting_and_anomaly_detection.md) §6.2 and [DESIGN/10](DESIGN/10_ml_summary.md) before touching either.
 
@@ -64,24 +66,24 @@ Every package in the consumer fan-out below `internal/ingest` (`alert`, `anomaly
 | Query API (`/api/v1/query`, `/query_range`) | **Built: `query_range` + `series` + `AnomalyRanking`**, exact-label-match (no PromQL yet), tier=raw/minute/hour. `internal/query/` — reads from `internal/storage`, no writes |
 | Alert rule evaluation + notifiers | **Built: v0.4.0.** `internal/alert/` — `Rule`/`Condition` (threshold/rate_of_change/anomaly), `Engine` (an `ingest.Consumer`). New notifier channels go in `internal/alert/notify/<channel>.go` behind the existing `Notifier` interface — see "Adding a new alert notifier" below and [DESIGN/06](DESIGN/06_design_alerting_and_anomaly_detection.md) §6.1 |
 | Anomaly detection (k-means ensemble) | **Built: v0.4.0**, matched against Netdata's real source, not just DESIGN/06 §6.2's summary — see [DESIGN/10](DESIGN/10_ml_summary.md) for the full mapping before changing model count/window/threshold defaults. `internal/anomaly/` (`model.go` — k-means + Netdata-matching preprocessing/scoring, `detector.go` — FIFO ensemble + staggered retraining). Wired into `cmd/circa` as a pre-ingest scoring step, not an `ingest.Consumer` — see the diagram note above |
-| Iceberg CDC export | Planned, v0.7.0. `internal/backup/` — watermark state, Arrow/Parquet batching, push+pull modes, see [DESIGN/07](DESIGN/07_design_backup.md) |
-| Config keys | **Built: v0.5.0, all sections except backup.** `server`/`ingest.collect`/`ingest.scrape`/`ingest.influx`/`storage`/`push`/`auth`/`alerting`/`anomaly` are acted on; `backup` decodes into `Config` (with cross-field `Validate()` checks) but isn't acted on yet — that's v0.7.0. `internal/config/config.go` + `template.go` (the `circa config init` template), *and* [config.example.yaml](config.example.yaml) — that file is the user-facing reference, config.go alone isn't enough |
-| `circa config init`/`check`, `circa auth add-user`/`reset-password`/`hash-password` | **Built: v0.3.0.** `cmd/circa/config_cli.go`, `cmd/circa/auth_cli.go` — see [DESIGN/08](DESIGN/08_design_config_auth_ops.md) §8.1.2 |
-| HTTP handlers + routes | **Built: `query_range`, `series`, `alerts`, `anomalies`, `status`, `healthz`, `readyz`, dashboard (`/`, `/static/*`), write receiver (`POST push.receive.path`, when `features.push_receive` is on).** `internal/httpapi/` — `/healthz`/`/readyz` stay unauthenticated even when `auth.users` is set, everything else goes through `internal/auth.Middleware` |
+| Iceberg CDC export | **Built: v0.7.0.** `internal/backup/` — `delta.go` (watermark-bounded tier-1 read, shared by push and pull), `iceberg.go` (Arrow record → `apache/iceberg-go` `Table.AppendTable`), `watermark.go` (persisted local state file), `exporter.go` (cron-scheduled, `github.com/robfig/cron/v3`). Push mode wired into `cmd/circa/main.go`; pull mode is `internal/httpapi`'s `GET /api/v1/backup_range` (node side) + `circa backup-agent` (`cmd/circa/backup_cli.go`, the central poller). See [DESIGN/07](DESIGN/07_design_backup.md) |
+| Config keys | **Built: v0.7.0, every section.** `server`/`ingest.collect`/`ingest.scrape`/`ingest.influx`/`storage`/`push`/`auth`/`alerting`/`anomaly`/`backup` are all acted on. `internal/config/config.go` + `template.go` (the `circa config init` template), *and* [config.example.yaml](config.example.yaml) — that file is the user-facing reference, config.go alone isn't enough |
+| `circa config init`/`check`, `circa auth add-user`/`reset-password`/`hash-password`, `circa backup-agent` | **Built: v0.3.0 (config/auth), v0.7.0 (backup-agent).** `cmd/circa/config_cli.go`, `cmd/circa/auth_cli.go`, `cmd/circa/backup_cli.go` — see [DESIGN/08](DESIGN/08_design_config_auth_ops.md) §8.1.2 and [DESIGN/07](DESIGN/07_design_backup.md) §7.3 |
+| HTTP handlers + routes | **Built: `query_range`, `series`, `alerts`, `anomalies`, `metrics`, `status`, `healthz`, `readyz`, dashboard (`/`, `/static/*`), write receiver (`POST push.receive.path`, when `features.push_receive` is on), `backup_range` (`GET /api/v1/backup_range`, when `features.backup` and `backup.mode: pull`).** `internal/httpapi/` — `/healthz`/`/readyz` stay unauthenticated even when `auth.users` is set, everything else goes through `internal/auth.Middleware`. Every request is also recorded into circa's own RED self-metrics (`instrumentHTTP`, see "Self-metrics" below) |
 | Dashboard HTML/CSS/JS (no build step) | **Built: v0.6.0 restructured this from one page into 8** — Overall (zero-config collector-category grid), one detail page per category (CPU/Memory/Network/Disk/Filesystem/Load), and Metrics (the original manual metric-picker chart + v0.4.0's Alerts/"what's unusual" panels), sharing one nav partial. `web/template/*.html` (one per page + `nav.html`), `web/static/js/{circa-chart,circa-data,overview,detail,app}.js`, `web/static/css/app.css` (category-color design tokens), embed/routing wiring in `web/embed.go`'s `pages` map |
 | Auth (basic auth, user store) | **Built: v0.3.0.** `internal/auth/` (`auth.go` — `Middleware`, bcrypt check; `userfile.go` — `SetUser`, edits `auth.users` into the YAML `yaml.Node` tree in place). See [DESIGN/08](DESIGN/08_design_config_auth_ops.md) §8.2 before adding anything beyond stateless basic auth |
 | Tests | unit: alongside the package (`_test.go`, white-box — see `internal/storage/storage_test.go` for the pattern); full-stack: an `internal/httpapi/integration_test.go` pattern once the HTTP layer grows beyond query_range/series (see servicedesk's `testEnv`/`client` pattern for the shape to copy) |
 
 ## An ingestion event, end to end
 
-Every step except step 6 (backup) is built; the `/metrics` registry write folded into step 4 is also still planned, per RELEASE.md.
+Every step is built as of v0.7.0.
 
 1. **Built** for self-collection, scrape, and remote-write; influx line protocol still planned. `internal/collect.Collector` ticks on its own interval (`ingest.collect.interval`, default 15s), reading the local host directly — no target URL, no HTTP round trip (v0.5.0). Each configured scrape target separately gets its own ticker in `internal/ingest/scrape`, firing on that target's own interval (config-driven, per-target — mirrors Prometheus's own scrape loop, not one global tick). Remote-write samples arrive event-driven whenever `internal/ingest/remotewrite`'s `ReceiveHandler` gets a `POST` (v0.3.0); line-protocol samples will similarly arrive via `internal/ingest/influx`'s HTTP handler once that's built.
 2. **Built: v0.4.0.** If `features.ml` is on, `cmd/circa`'s `handleSample` calls `internal/anomaly.Detector.Score()` **before** the sample reaches the pipeline, setting `ingest.Sample.Anomalous`. This runs ahead of (not as part of) step 4 deliberately — see the diagram note above and [DESIGN/10](DESIGN/10_ml_summary.md) §3.
 3. **Built.** Whichever source produced the batch normalizes it into Circa's own sample shape (with `Anomalous` already set, if applicable) and hands it to `internal/ingest.Pipeline.Ingest()`.
-4. **Built (storage write); planned (`/metrics` write, v0.7.0).** The batch is handed to `internal/storage.Append()` — the only mandatory consumer, regardless of source — which embeds the anomaly bit into the value it writes (`internal/storage/anomalybit.go`). It will also be written to the standard Prometheus registry (serves `/metrics` for external scraping/federation) once that milestone lands.
+4. **Built.** The batch is handed to `internal/storage.Append()` — the only mandatory consumer, regardless of source — which embeds the anomaly bit into the value it writes (`internal/storage/anomalybit.go`). **Built differently than originally planned, v0.7.0:** rather than a live-updated Prometheus `client_golang` registry fed on every ingest event, `GET /metrics` (`internal/httpapi/metrics.go`) reads lazily on each scrape of the endpoint — the latest point per series straight out of `internal/storage` via `internal/query`, over a short lookback window. Simpler (no second in-memory copy of every series' current value to keep in sync) and consistent with `internal/query` being the only reader.
 5. **Built: v0.4.0.** If `features.alerts` is on, the same batch also goes to `internal/alert.Engine.Consume()` (a real `ingest.Consumer`, fanned out alongside `internal/storage`) against tier-0 data; a rule crossing its threshold/rate-of-change/anomaly-bit condition + hysteresis dispatches through `internal/alert/notify`.
-6. Planned, v0.7.0. If `features.backup` is on, `internal/backup`'s own scheduler (independent of any ingestion event) periodically reads everything past its watermark from `internal/storage` and appends it to the configured Iceberg table.
+6. **Built: v0.7.0.** If `features.backup` is on, `internal/backup`'s own cron-scheduled `Exporter` (independent of any ingestion event) periodically reads everything past its watermark from `internal/storage` (via `internal/query`, tier-1) and appends it to the configured Iceberg table.
 7. **Built: v0.4.0**, separately from the ingestion path. `internal/anomaly.Detector.Run()` retrains models on its own schedule (staggered across `RetrainInterval`), reading recent history back out through `internal/query`, not from the live ingestion stream.
 8. **Built.** The UI (`web/`) and any external tool talk to `internal/query`, never to `internal/storage` directly — `internal/query` is the only reader, `internal/ingest`/`internal/backup` are the only writers.
 
@@ -100,6 +102,23 @@ The local host itself needs **no configuration at all** — `internal/collect` m
 1. Implement `alert.Notifier` (one `Notify(alert.Alert) error` method) in a new `internal/alert/notify/<channel>.go` — see `webhook.go`/`slack.go` for the shape.
 2. Add the channel's `type` string to the `switch` in `cmd/circa/main.go`'s alert-engine wiring (constructing the concrete `notify.*` type from each `config.NotifierConfig`), and to `validateAlerting`'s type check in `internal/config/config.go`.
 3. Don't touch `internal/alert`'s rule-evaluation logic (`engine.go`) — notifiers are deliberately decoupled from the rule engine so adding a channel never risks the evaluation path.
+
+## Self-metrics (v0.7.0)
+
+Every package that does real work registers its own RED (rate/errors/duration) metrics via `promauto` into the shared global `prometheus.DefaultRegisterer` — no `*prometheus.Registry` threaded through constructors; a package-level `var` block in each package's own `metrics.go` is enough, since the registration happens once at process startup regardless of how many times a constructor runs. `internal/httpapi/metrics.go`'s `GET /metrics` handler gathers from `prometheus.DefaultGatherer`, so a new package's self-metrics show up automatically the moment it registers, with no wiring change in `httpapi` itself.
+
+| Package | Metrics | What "traffic"/"errors"/"delay" mean here |
+| :--- | :--- | :--- |
+| `internal/httpapi` (`selfmetrics.go`) | `circa_http_requests_total{method,path,status}`, `circa_http_request_duration_seconds{method,path}` | Every HTTP request circa serves, via `instrumentHTTP` wrapping the outermost router — including `/healthz`/`/readyz` and anything auth rejects |
+| `internal/storage` (`metrics.go`) | `circa_storage_writes_total`, `circa_storage_write_errors_total`, `circa_storage_write_duration_seconds`, `circa_storage_query_duration_seconds{tier}` | One `TieredStore.Consume` call = one write (raw append + rollup accumulation); one `QueryRange` call = one query, labeled by tier |
+| `internal/ingest/scrape` (`metrics.go`) | `circa_scrape_requests_total{target}`, `circa_scrape_errors_total{target}`, `circa_scrape_duration_seconds{target}` | One `scrapeOnce` per configured target |
+| `internal/ingest/remotewrite` (`metrics.go`) | `circa_remotewrite_receive_samples_total`; `circa_remotewrite_send_total{result}`, `circa_remotewrite_send_duration_seconds` | Receive's request-level RED is already covered by the generic HTTP layer (it's just a POST route) — this adds sample-level volume a request count can't show. Send has no HTTP-layer coverage at all (it's this process acting as a client), so it gets full RED |
+| `internal/collect` (`metrics.go`) | `circa_collect_ticks_total{result}`, `circa_collect_duration_seconds`, `circa_collect_samples_total` | One tick of the local collector |
+| `internal/alert` (`metrics.go`) | `circa_alert_evaluations_total{rule}`, `circa_alert_evaluation_duration_seconds{rule}`; `circa_alert_notify_total{notifier,result}`, `circa_alert_notify_duration_seconds{notifier}` | Evaluation has no real "error" outcome (a rule either matches or doesn't); notifier dispatch is a real network call that can fail |
+| `internal/anomaly` (`metrics.go`) | `circa_anomaly_scores_total`, `circa_anomaly_score_duration_seconds`; `circa_anomaly_retrains_total{result}`, `circa_anomaly_retrain_duration_seconds` | `Score` has no error outcome either; `retrainOne` genuinely can fail (query error) or be a no-op (not enough history yet, labeled `"skipped"`, not `"error"`) |
+| `internal/backup` (`metrics.go`) | `circa_backup_exports_total{result}`, `circa_backup_export_duration_seconds`, `circa_backup_rows_exported_total` | One `exportOnce` cycle, whether push mode (in-process) or one of `backup-agent`'s per-node pollers |
+
+This is DESIGN/05's "lightweight self-metrics panel" — the metrics themselves are built; a dashboard **page** visualizing them is deferred to [RELEASE/v1.0.0.md](RELEASE/v1.0.0.md)'s final UI polish pass. `/metrics` already makes them consumable by an external Prometheus/Grafana in the meantime.
 
 ## Deployment shape
 

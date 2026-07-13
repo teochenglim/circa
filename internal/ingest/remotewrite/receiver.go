@@ -75,6 +75,7 @@ func ReceiveHandler(handler Handler, logger *slog.Logger) http.Handler {
 				count++
 			}
 		}
+		receiveSamplesTotal.Add(float64(count))
 		logger.Debug("remote-write received", "series", len(req.Timeseries), "samples", count)
 
 		w.WriteHeader(http.StatusNoContent)

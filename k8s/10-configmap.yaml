@@ -13,7 +13,7 @@ data:
       collect: true   # built-in self-monitoring (v0.5.0) - zero-config, see 20-daemonset.yaml's HOST_PROC mount
       ml: false
       alerts: false
-      backup: false
+      backup: false   # to enable: set true and add a `backup:` section here - see config.example.yaml and DESIGN/07; credentials go in 11-secret.yaml, never here
       influx_receive: false
       push_receive: false
       push_send: false

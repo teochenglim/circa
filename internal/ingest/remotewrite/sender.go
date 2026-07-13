@@ -65,7 +65,10 @@ func (s *Sender) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-func (s *Sender) sendOnce(ctx context.Context, interval time.Duration) error {
+func (s *Sender) sendOnce(ctx context.Context, interval time.Duration) (err error) {
+	start := time.Now()
+	defer func() { observeSend(start, err) }()
+
 	now := time.Now()
 	keys := s.engine.Series()
 

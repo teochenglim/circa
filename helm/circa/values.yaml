@@ -54,17 +54,34 @@ storage:
     minute: 7d
     hour: 365d
 
+# Only read if features.backup is true (off by default). mode: push means
+# *this* DaemonSet pod writes to Iceberg directly - see DESIGN/07 and
+# RELEASE/v0.7.0.md. Credentials are secrets.* below, not here (never
+# commit real catalog/S3 credentials to values.yaml).
+# backup:
+#   mode: push
+#   nodeId: ""              # defaults to the pod's own hostname if unset
+#   schedule: "*/15 * * * *"
+#   catalog:
+#     uri: https://iceberg-catalog.internal:8181
+#     warehouse: s3://metrics-lake/circa
+#     s3Endpoint: ""        # only for a self-hosted S3-compatible warehouse (MinIO, etc.)
+#     s3Region: us-east-1
+
 # Bcrypt-hashed users for basic auth - empty map = no auth (default).
 # Set via --set-string or a values override file; never commit real hashes.
 auth:
   users: {}
 
 # Populate via --set-string or a separate values-secrets.yaml kept out of
-# git, e.g. for alert notifier webhooks or backup catalog credentials.
+# git. backupS3AccessKey/backupS3SecretKey become AWS_ACCESS_KEY_ID/
+# AWS_SECRET_ACCESS_KEY in the pod (the AWS SDK's own default credential
+# chain, per DESIGN/07 §7.6) - see templates/secret.yaml.
 secrets:
   alertWebhookURL: ""
   backupS3AccessKey: ""
   backupS3SecretKey: ""
+  backupCatalogToken: "" # optional - only if the REST catalog itself needs a bearer token separate from S3 auth
 
 resources:
   requests:

@@ -1,9 +1,7 @@
 // Package config loads circa's single YAML config file.
 //
-// server, ingest.scrape, storage, push, auth, alerting, and anomaly are read
-// and acted on as of v0.4.0. backup is decoded into Config (so `circa config
-// check` has something to validate) but not yet acted on — that lands in
-// v0.5.0.
+// server, ingest.scrape, ingest.collect, storage, push, auth, alerting,
+// anomaly, and backup are all read and acted on as of v0.7.0.
 package config
 
 import (
@@ -14,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -212,18 +211,37 @@ type Anomaly struct {
 	ScoreThreshold  float64  `yaml:"score_threshold"`  // 0..100 - min-max-normalized distance at/above which a point counts as anomalous
 }
 
-// Backup is decoded so `circa config check` can validate it (per DESIGN/08
-// §8.1.2's "backup.mode is pull but no catalog URI set" example) ahead of
-// the exporter itself, which is v0.5.0.
+// Backup is acted on as of v0.7.0 (internal/backup) — see DESIGN/07.
 type Backup struct {
-	Mode     string        `yaml:"mode"` // "push" or "pull"
-	Schedule string        `yaml:"schedule"`
-	Catalog  BackupCatalog `yaml:"catalog"`
+	Mode     string `yaml:"mode"`     // "push" or "pull"
+	Schedule string `yaml:"schedule"` // cron syntax, e.g. "*/15 * * * *" - see github.com/robfig/cron/v3
+	// NodeID identifies this node in exported rows (DESIGN/07 §7.4);
+	// defaults to os.Hostname() if unset.
+	NodeID  string        `yaml:"node_id"`
+	Catalog BackupCatalog `yaml:"catalog"`
+	// Nodes is only read by `circa backup-agent` (the pull-mode central
+	// poller, DESIGN/07 §7.3) — the node URLs to pull
+	// GET /api/v1/backup_range from. A regular node running mode: pull
+	// (just serving that endpoint) doesn't read this itself.
+	Nodes []BackupNode `yaml:"nodes"`
+}
+
+type BackupNode struct {
+	URL      string `yaml:"url"`
+	Username string `yaml:"username"` // optional, if the polled node has auth.users set
+	Password string `yaml:"password"`
 }
 
 type BackupCatalog struct {
 	URI       string `yaml:"uri"`
 	Warehouse string `yaml:"warehouse"`
+	// S3Endpoint/S3Region are only needed for a self-hosted S3-compatible
+	// warehouse (MinIO, etc.) rather than real AWS S3, which the AWS SDK's
+	// own default endpoint resolution already handles. Credentials
+	// themselves are never config fields — see internal/backup.NewIcebergWriter's
+	// doc comment for why (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars).
+	S3Endpoint string `yaml:"s3_endpoint"`
+	S3Region   string `yaml:"s3_region"`
 }
 
 // Push holds the two remote-write directions from DESIGN/04 §4.4, both
@@ -360,6 +378,11 @@ func (cfg *Config) applyDefaults() {
 	if cfg.Features.Collect == nil {
 		cfg.Features.Collect = boolPtr(true)
 	}
+	if cfg.Backup.NodeID == "" {
+		if h, err := os.Hostname(); err == nil {
+			cfg.Backup.NodeID = h
+		}
+	}
 	if cfg.Ingest.Collect.Interval == 0 {
 		cfg.Ingest.Collect.Interval = Duration(DefaultCollectInterval)
 	}
@@ -436,11 +459,28 @@ func (cfg Config) Validate() []error {
 		default:
 			errs = append(errs, fmt.Errorf("backup.mode %q is invalid (want \"push\" or \"pull\")", cfg.Backup.Mode))
 		}
-		if cfg.Backup.Mode == "pull" && cfg.Backup.Catalog.URI == "" {
-			errs = append(errs, errors.New("backup.mode is pull but backup.catalog.uri is empty"))
-		}
-		if cfg.Backup.Catalog.Warehouse == "" {
-			errs = append(errs, errors.New("features.backup is true but backup.catalog.warehouse is empty"))
+		// Only push mode writes to Iceberg directly from this process, so
+		// only push mode requires catalog.uri/warehouse here. A plain
+		// mode: pull node just serves GET /api/v1/backup_range and never
+		// touches the catalog itself; `circa backup-agent` (the pull-mode
+		// central poller that does write to Iceberg) validates its own
+		// catalog/nodes config separately at its own entry point, since it
+		// may run against a different config file than the nodes it polls.
+		// (Fixed from an earlier, backwards version of this check that
+		// required catalog.uri only for pull mode and warehouse always —
+		// exactly inverted from what each mode actually needs.)
+		if cfg.Backup.Mode == "push" {
+			if cfg.Backup.Catalog.URI == "" {
+				errs = append(errs, errors.New("backup.mode is push but backup.catalog.uri is empty"))
+			}
+			if cfg.Backup.Catalog.Warehouse == "" {
+				errs = append(errs, errors.New("backup.mode is push but backup.catalog.warehouse is empty"))
+			}
+			if cfg.Backup.Schedule == "" {
+				errs = append(errs, errors.New("backup.mode is push but backup.schedule is empty"))
+			} else if _, err := cron.ParseStandard(cfg.Backup.Schedule); err != nil {
+				errs = append(errs, fmt.Errorf("backup.schedule %q is invalid: %w", cfg.Backup.Schedule, err))
+			}
 		}
 	}
 

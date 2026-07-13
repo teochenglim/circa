@@ -39,8 +39,9 @@ helm upgrade --install circa helm/circa -f values-secrets.yaml
 | `ingest.scrape.targets` | `[]` | Empty by default — self-collection already covers this node. Add entries for *additional* co-located exporters or other hosts, see [../../DESIGN/04_design_collection_and_ingestion.md](../../DESIGN/04_design_collection_and_ingestion.md) §4.2 |
 | `storage.hostPath` | `/var/lib/circa/data` | Node-local; survives pod restarts on the same node, lost if the node is replaced — see [../../DESIGN/07_design_backup.md](../../DESIGN/07_design_backup.md) for why long-term durability is the backup feature's job, not this volume's |
 | `storage.retention.*` | `2h` / `7d` / `365d` | Per-tier retention, see [../../DESIGN/03_design_storage.md](../../DESIGN/03_design_storage.md) |
+| `backup` | unset (commented out in values.yaml) | Only rendered into config.yaml if set — `mode: push` means *this* DaemonSet pod writes to Iceberg directly (v0.7.0, [../../DESIGN/07_design_backup.md](../../DESIGN/07_design_backup.md)); catalog/S3 *credentials* are `secrets.*` below, never this block |
 | `auth.users` | `{}` (no auth) | Map of `username: bcrypt-hash` — set via a secrets values file, never inline |
-| `secrets.*` | empty | Alert webhook URL, backup S3 credentials — same rule as above |
+| `secrets.*` | empty | `alertWebhookURL`; `backupS3AccessKey`/`backupS3SecretKey` (become `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` in the pod — the AWS SDK's own default credential chain, see `templates/secret.yaml`); `backupCatalogToken` (optional REST catalog bearer token) — never put real values inline, same rule as `auth.users` |
 | `hostNetwork` | `true` | So Circa can scrape a co-located exporter over `localhost` and its own `/metrics` is reachable at `<node-ip>:9100` without an extra hop |
 
 ## Linting / rendering locally
