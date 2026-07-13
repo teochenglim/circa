@@ -6,8 +6,11 @@ Newest first.
 
 | Version | Theme | Status |
 | :--- | :--- | :--- |
+| [v1.1.0](RELEASE/v1.1.0.md) | Windows (and other non-Linux/non-macOS) system collection | Not started |
 | [v1.0.0](RELEASE/v1.0.0.md) | Hardening, sizing calculator, packaging, docs | Not started |
-| [v0.5.0](RELEASE/v0.5.0.md) | Federation & self-expose (backup CDC to Iceberg, federation search, `/metrics`) | Not started |
+| [v0.7.0](RELEASE/v0.7.0.md) | Federation & self-expose (backup CDC to Iceberg, federation search, `/metrics`) | Not started |
+| [v0.6.0](RELEASE/v0.6.0.md) | Netdata-style dashboard (zero-config system overview) | Not started |
+| [v0.5.0](RELEASE/v0.5.0.md) | Built-in system collection, Linux + macOS (`/proc`/`/sys`/`sysctl`, node_exporter/Netdata-referenced) | Not started |
 | [v0.4.0](RELEASE/v0.4.0.md) | Intelligence (alerting, anomaly detection) | **Shipped** |
 | [v0.3.0](RELEASE/v0.3.0.md) | Operability (config & CLI, auth, push/pull remote-write ingestion) | **Shipped** |
 | [v0.2.0](RELEASE/v0.2.0.md) | Visibility (UI, compression) | **Shipped** |

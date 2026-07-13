@@ -10,6 +10,7 @@ data:
       listen_address: ":9100"
 
     features:
+      collect: true   # built-in self-monitoring (v0.5.0) - zero-config, see 20-daemonset.yaml's HOST_PROC mount
       ml: false
       alerts: false
       backup: false
@@ -17,14 +18,14 @@ data:
       push_receive: false
       push_send: false
 
-    # Scrapes the node's own node_exporter (deployed separately) over
-    # localhost - this pod runs with hostNetwork, see 20-daemonset.yaml.
     ingest:
+      collect:
+        interval: 15s
+      # Empty by default - self-collection above already covers this node.
+      # Add entries here for additional co-located exporters (this pod runs
+      # with hostNetwork, so localhost reaches them), or other hosts entirely.
       scrape:
-        targets:
-          - url: http://localhost:9100/metrics
-            interval: 15s
-            labels: { job: node }
+        targets: []
 
     storage:
       path: /data

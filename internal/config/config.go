@@ -88,11 +88,32 @@ type Features struct {
 	InfluxReceive bool `yaml:"influx_receive"`
 	PushReceive   bool `yaml:"push_receive"`
 	PushSend      bool `yaml:"push_send"`
+
+	// Collect is the one feature flag that isn't off-by-default (see
+	// RELEASE/v0.5.0.md): circa is a self-monitoring single-binary tool
+	// first, not just a scrape-and-store shell around some other exporter —
+	// a fresh install with an empty scrape target list still has its own
+	// host's cpu/memory/disk/network metrics flowing immediately. *bool
+	// (not plain bool, unlike every other feature above) so "the key was
+	// absent from the file" and "explicitly set to false" are
+	// distinguishable — see CollectEnabled.
+	Collect *bool `yaml:"collect"`
 }
 
+// CollectEnabled reports whether built-in local system collection
+// (internal/collect) should run — true unless the file explicitly set
+// features.collect: false. Prefer this over reading cfg.Features.Collect
+// directly.
+func (cfg Config) CollectEnabled() bool {
+	return cfg.Features.Collect == nil || *cfg.Features.Collect
+}
+
+func boolPtr(b bool) *bool { return &b }
+
 type Ingest struct {
-	Scrape ScrapeConfig `yaml:"scrape"`
-	Influx InfluxConfig `yaml:"influx"`
+	Scrape  ScrapeConfig  `yaml:"scrape"`
+	Influx  InfluxConfig  `yaml:"influx"`
+	Collect CollectConfig `yaml:"collect"`
 }
 
 // InfluxConfig is decoded and validated as of v0.3.0 (path required whenever
@@ -110,6 +131,13 @@ type ScrapeTarget struct {
 	URL      string            `yaml:"url"`
 	Interval Duration          `yaml:"interval"`
 	Labels   map[string]string `yaml:"labels"`
+}
+
+// CollectConfig configures internal/collect, built in v0.5.0 — the local
+// host's own cpu/memory/disk/network/load, not a scrape target's. See
+// RELEASE/v0.5.0.md.
+type CollectConfig struct {
+	Interval Duration `yaml:"interval"`
 }
 
 type Storage struct {
@@ -225,6 +253,7 @@ type Auth struct {
 const (
 	DefaultPushReceivePath = "/api/v1/write"
 	DefaultInfluxPath      = "/write"
+	DefaultCollectInterval = 15 * time.Second
 )
 
 // Anomaly defaults — mirror Netdata's own ml_config.cc defaults exactly
@@ -242,11 +271,16 @@ const (
 )
 
 // Default returns the config used when no file is given, or when a field is
-// left unset in the file — a fresh install with an empty target list should
-// still start up and serve an empty dashboard, per DESIGN/04 §4.2.
+// left unset in the file. A fresh install with an empty scrape target list
+// is no longer an empty dashboard (that was DESIGN/04 §4.2's original
+// framing, pre-v0.5.0): Features.Collect defaults on, so circa monitors its
+// own host's cpu/memory/disk/network immediately — scrape targets are for
+// *other* hosts/exporters, not a prerequisite for circa to show anything at
+// all. See RELEASE/v0.5.0.md.
 func Default() Config {
 	return Config{
-		Server: Server{ListenAddress: ":9100"},
+		Server:   Server{ListenAddress: ":9100"},
+		Features: Features{Collect: boolPtr(true)},
 		Storage: Storage{
 			Path: "./data",
 			Retention: Retention{
@@ -255,7 +289,10 @@ func Default() Config {
 				Hour:   Duration(365 * 24 * time.Hour),
 			},
 		},
-		Ingest: Ingest{Influx: InfluxConfig{Path: DefaultInfluxPath}},
+		Ingest: Ingest{
+			Influx:  InfluxConfig{Path: DefaultInfluxPath},
+			Collect: CollectConfig{Interval: Duration(DefaultCollectInterval)},
+		},
 		Push: Push{
 			Receive: PushReceive{Path: DefaultPushReceivePath},
 			Send:    PushSend{Interval: Duration(30 * time.Second)},
@@ -318,6 +355,14 @@ func (cfg *Config) applyDefaults() {
 	if cfg.Ingest.Influx.Path == "" {
 		cfg.Ingest.Influx.Path = DefaultInfluxPath
 	}
+	// features.collect being absent from the file (nil, not explicit
+	// false) means "on" — see CollectEnabled and RELEASE/v0.5.0.md.
+	if cfg.Features.Collect == nil {
+		cfg.Features.Collect = boolPtr(true)
+	}
+	if cfg.Ingest.Collect.Interval == 0 {
+		cfg.Ingest.Collect.Interval = Duration(DefaultCollectInterval)
+	}
 	if cfg.Push.Receive.Path == "" {
 		cfg.Push.Receive.Path = DefaultPushReceivePath
 	}
@@ -364,6 +409,10 @@ func (cfg Config) Validate() []error {
 
 	if cfg.Features.InfluxReceive && cfg.Ingest.Influx.Path == "" {
 		errs = append(errs, errors.New("features.influx_receive is true but ingest.influx.path is empty"))
+	}
+
+	if cfg.CollectEnabled() && cfg.Ingest.Collect.Interval < 0 {
+		errs = append(errs, errors.New("ingest.collect.interval must not be negative"))
 	}
 
 	if cfg.Features.PushReceive && cfg.Push.Receive.Path == "" {

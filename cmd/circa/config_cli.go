@@ -15,7 +15,7 @@ func runConfigInit(args []string) error {
 	fs := flag.NewFlagSet("config init", flag.ExitOnError)
 	profile := fs.String("profile", "minimal", `template preset: "minimal" (collection+storage+UI only) or "full" (everything on, for demo/eval)`)
 	output := fs.String("output", "config.yaml", "path to write the generated config to")
-	hostname := fs.String("hostname", "", "host:port for the default scrape target (default localhost:9100)")
+	hostname := fs.String("hostname", "", "host:port for an additional scrape target (optional - circa self-monitors its own host by default, see features.collect)")
 	listen := fs.String("listen", "", "server.listen_address override (default :9100)")
 	retentionRaw := fs.String("retention.raw", "", "storage.retention.raw override (default 2h)")
 	retentionMinute := fs.String("retention.minute", "", "storage.retention.minute override (default 7d)")

@@ -18,9 +18,13 @@ image:
 
 listenAddress: ":9100"
 
-# Mirrors config.example.yaml's `features` block - every optional subsystem
-# off by default so the baseline footprint stays lean.
+# Mirrors config.example.yaml's `features` block. collect is the one
+# exception to "every optional subsystem off by default": circa is a
+# self-monitoring single binary (v0.5.0+), so this DaemonSet's pods report
+# their own node's cpu/memory/disk/network with zero extra config - see
+# RELEASE/v0.5.0.md and daemonset.yaml's HOST_PROC mount.
 features:
+  collect: true
   ml: false
   alerts: false
   backup: false
@@ -28,16 +32,19 @@ features:
   pushReceive: false
   pushSend: false
 
-# What Circa scrapes - a co-located node_exporter by default (this DaemonSet
-# runs with hostNetwork, so localhost reaches the node's own exporter(s)).
-# Add more targets for other local exporters; no Circa code change needed.
 ingest:
+  collect:
+    interval: 15s
+  # Empty by default - self-collection above already covers this node. Add
+  # entries here for additional co-located exporters (this DaemonSet runs
+  # with hostNetwork, so localhost reaches them) or other hosts entirely; no
+  # Circa code change needed. Example:
+  #   targets:
+  #     - url: http://localhost:9256/metrics   # e.g. a co-located process-exporter
+  #       interval: 15s
+  #       labels: { job: process }
   scrape:
-    targets:
-      - url: http://localhost:9100/metrics
-        interval: 15s
-        labels:
-          job: node
+    targets: []
 
 storage:
   # Node-local hostPath - see helm/circa/README.md for the durability tradeoff.

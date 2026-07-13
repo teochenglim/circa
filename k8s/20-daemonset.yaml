@@ -1,7 +1,11 @@
-# One Circa pod per node - scrapes that node's co-located exporter(s) (e.g.
-# node_exporter, deployed separately) over localhost via hostNetwork, rather
-# than reading /proc or /sys itself. Not a Deployment: there is no "replica
-# count" dimension to scale here (ARCHITECTURE.md "Deployment shape").
+# One Circa pod per node - self-monitors that node's own cpu/memory/disk/
+# network via the built-in collector (internal/collect, v0.5.0+), reading
+# the host's real /proc through a read-only bind mount (HOST_PROC below) -
+# zero-config, no co-located node_exporter required. ingest.scrape.targets
+# in 10-configmap.yaml is still there for *additional* exporters, it's just
+# no longer a prerequisite for this pod to report anything. Not a
+# Deployment: there is no "replica count" dimension to scale here
+# (ARCHITECTURE.md "Deployment shape").
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -24,7 +28,7 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: circa
-          image: "ghcr.io/teochenglim/circa:0.4.0"
+          image: "ghcr.io/teochenglim/circa:0.5.0"
           args: ["-config", "/etc/circa/config.yaml"]
           ports:
             - containerPort: 9100
@@ -35,6 +39,22 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          env:
+            # Downward API - tags every self-collected sample with which
+            # pod/node/namespace it came from (internal/collect's
+            # Collector.labels), so a DaemonSet's per-node metrics stay
+            # distinguishable once federated (RELEASE/v0.7.0.md).
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            # Points internal/collect at the host's real /proc (mounted
+            # below) instead of this container's own - see
+            # internal/collect/linux.go's procRoot doc comment.
+            - name: HOST_PROC
+              value: /host/proc
           envFrom:
             - secretRef:
                 name: circa-secrets
@@ -54,12 +74,17 @@ spec:
             - name: config
               mountPath: /etc/circa
               readOnly: true
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
             - name: data
               mountPath: /data
       volumes:
         - name: config
           configMap:
             name: circa-config
+        - name: proc
+          hostPath: { path: /proc }
         - name: data
           # Node-local RRD storage: survives pod restarts on the same node,
           # lost if the node itself is replaced - acceptable since long-term

@@ -1,6 +1,6 @@
 # helm/circa
 
-Templated equivalent of the plain manifests in [../../k8s/](../../k8s/) — same DaemonSet shape (one Circa pod per node, `hostNetwork` to scrape a co-located exporter over `localhost`, headless `Service`), values-driven instead of hand-edited. See [../../ARCHITECTURE.md](../../ARCHITECTURE.md) "Deployment shape" for why this is a DaemonSet and not a `Deployment`.
+Templated equivalent of the plain manifests in [../../k8s/](../../k8s/) — same DaemonSet shape (one Circa pod per node, self-monitoring via a read-only `/proc` bind mount, headless `Service`), values-driven instead of hand-edited. Each pod reads its own node's `/proc` through `HOST_PROC=/host/proc` (built-in collector, `internal/collect`, v0.5.0+) — zero-config, no co-located node_exporter required; `ingest.scrape.targets` is for *additional* exporters now, not a prerequisite. See [../../ARCHITECTURE.md](../../ARCHITECTURE.md) "Deployment shape" for why this is a DaemonSet and not a `Deployment`.
 
 ## Install
 
@@ -33,8 +33,10 @@ helm upgrade --install circa helm/circa -f values-secrets.yaml
 | :--- | :--- | :--- |
 | `image.repository` / `image.tag` | `circa` / `latest` | Set `image.tag` to a real released version before using this outside a local demo |
 | `listenAddress` | `:9100` | Same convention as node_exporter's default port, on the same node |
-| `features.*` | all `false` | Mirrors `config.example.yaml`'s `features` block — see [../../DESIGN/08_design_config_auth_ops.md](../../DESIGN/08_design_config_auth_ops.md) §8.1.3 |
-| `ingest.scrape.targets` | `[{url: http://localhost:9100/metrics, ...}]` | What Circa scrapes — a co-located node_exporter by default, add more targets for other local exporters, see [../../DESIGN/04_design_collection_and_ingestion.md](../../DESIGN/04_design_collection_and_ingestion.md) §4.2 |
+| `features.collect` | `true` | Built-in self-monitoring (v0.5.0+) — the one feature on by default, since circa is a self-monitoring single binary, not a scrape-and-store shell around some other exporter. See [../../RELEASE/v0.5.0.md](../../RELEASE/v0.5.0.md) |
+| `features.*` (everything else) | all `false` | Mirrors `config.example.yaml`'s `features` block — see [../../DESIGN/08_design_config_auth_ops.md](../../DESIGN/08_design_config_auth_ops.md) §8.1.3 |
+| `ingest.collect.interval` | `15s` | How often the built-in collector samples the local host |
+| `ingest.scrape.targets` | `[]` | Empty by default — self-collection already covers this node. Add entries for *additional* co-located exporters or other hosts, see [../../DESIGN/04_design_collection_and_ingestion.md](../../DESIGN/04_design_collection_and_ingestion.md) §4.2 |
 | `storage.hostPath` | `/var/lib/circa/data` | Node-local; survives pod restarts on the same node, lost if the node is replaced — see [../../DESIGN/07_design_backup.md](../../DESIGN/07_design_backup.md) for why long-term durability is the backup feature's job, not this volume's |
 | `storage.retention.*` | `2h` / `7d` / `365d` | Per-tier retention, see [../../DESIGN/03_design_storage.md](../../DESIGN/03_design_storage.md) |
 | `auth.users` | `{}` (no auth) | Map of `username: bcrypt-hash` — set via a secrets values file, never inline |

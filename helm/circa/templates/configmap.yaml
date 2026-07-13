@@ -10,6 +10,7 @@ data:
       listen_address: "{{ .Values.listenAddress }}"
 
     features:
+      collect: {{ .Values.features.collect }}   # built-in self-monitoring (v0.5.0) - zero-config
       ml: {{ .Values.features.ml }}
       alerts: {{ .Values.features.alerts }}
       backup: {{ .Values.features.backup }}
@@ -18,6 +19,8 @@ data:
       push_send: {{ .Values.features.pushSend }}
 
     ingest:
+      collect:
+        interval: {{ .Values.ingest.collect.interval }}
       scrape:
         targets:
           {{- range .Values.ingest.scrape.targets }}

@@ -4,7 +4,7 @@
 
 A single-binary metrics aggregator with embedded storage, a built-in dashboard, alerting, and lightweight anomaly detection — no external database, no separate UI deploy, no Alertmanager required.
 
-Circa doesn't collect metrics itself. It ingests them from whatever's already producing them — scraping any Prometheus-exposition-format exporter (node_exporter, postgres_exporter, a custom app's `/metrics`, or an existing Prometheus server's `/federate`), accepting Telegraf via InfluxDB line protocol, and accepting/sending Prometheus remote-write — stores them locally in a fixed-size round-robin structure (constant disk footprint, Gorilla-style compression), and serves a static-HTML dashboard directly from the binary. Everything past ingestion + storage + `/metrics` is optional and feature-flagged off by default: alerting, k-means anomaly detection, and scheduled backup into an Iceberg lake.
+Circa is a self-monitoring single binary: point it at nothing and it already reports its own host's cpu/memory/disk/network, zero config (see [RELEASE/v0.5.0.md](RELEASE/v0.5.0.md)). It's also a general ingestion point for whatever else is already producing metrics — scraping any Prometheus-exposition-format exporter (node_exporter, postgres_exporter, a custom app's `/metrics`, or an existing Prometheus server's `/federate`), accepting Telegraf via InfluxDB line protocol, and accepting/sending Prometheus remote-write. Everything gets stored locally in a fixed-size round-robin structure (constant disk footprint, Gorilla-style compression) and served from a static-HTML dashboard directly out of the binary. Everything past self-collection + ingestion + storage + `/metrics` is optional and feature-flagged off by default: alerting, k-means anomaly detection, and scheduled backup into an Iceberg lake.
 
 See [DESIGN.md](DESIGN.md) for the full design, [ARCHITECTURE.md](ARCHITECTURE.md) for how the code is (intended to be) organized, and [RELEASE.md](RELEASE.md) for what's actually shipped so far.
 
@@ -19,7 +19,7 @@ make config-init            # copies config.example.yaml -> config.yaml
 go run ./cmd/circa -config config.yaml
 ```
 
-Visit `http://localhost:9100` for the dashboard. Metrics are stored locally under `storage.path` from your config (default `/var/lib/circa/data`, override it in `config.yaml` for local runs).
+Visit `http://localhost:9100` for the dashboard — it's already showing this machine's own cpu/memory/disk/network (built-in self-collection, on by default). Metrics are stored locally under `storage.path` from your config (default `/var/lib/circa/data`, override it in `config.yaml` for local runs).
 
 ### Option 2 — Docker Compose
 
@@ -29,7 +29,7 @@ make up      # docker-compose.yaml: single container, local volume for RRD data
 
 ### Option 3 — Kubernetes (DaemonSet)
 
-Circa is a per-node agent, not a stateless web app, so it deploys as a **DaemonSet** — one pod per node, scraping that node's co-located exporter(s) (e.g. node_exporter) over `localhost`. See [k8s/README.md](k8s/README.md) for the manifests, or use the Helm chart instead:
+Circa is a per-node agent, not a stateless web app, so it deploys as a **DaemonSet** — one pod per node, self-monitoring that node via a read-only `/proc` bind mount (no co-located node_exporter required). See [k8s/README.md](k8s/README.md) for the manifests, or use the Helm chart instead:
 
 ```bash
 helm upgrade --install circa helm/circa
@@ -53,8 +53,8 @@ Or generate one instead of copying the example: `circa config init` (add `--prof
 | Section | Controls |
 | :--- | :--- |
 | `server` | Listen address, optional TLS |
-| `features` | Master on/off switches: `ml`, `alerts`, `backup`, `push_receive`, `push_send` — all off by default |
-| `ingest` | Scrape target list, InfluxDB line-protocol receiver settings — only read if the matching `features.*` flag is true (scrape itself always runs) |
+| `features` | Master on/off switches: `collect` (built-in self-monitoring — **on** by default, see [RELEASE/v0.5.0.md](RELEASE/v0.5.0.md)), `ml`, `alerts`, `backup`, `push_receive`, `push_send` — every one besides `collect` is off by default |
+| `ingest` | Local collection interval, scrape target list (for *additional* hosts/exporters), InfluxDB line-protocol receiver settings — only read if the matching `features.*` flag is true (scrape itself always runs) |
 | `storage` | Local data path, per-tier retention (`raw`/`minute`/`hour`) |
 | `alerting` | Rules + notifiers — only read if `features.alerts` is true |
 | `backup` | Iceberg catalog/warehouse, push vs. pull mode — only read if `features.backup` is true |
@@ -101,7 +101,7 @@ make build           # binary in ./bin
 
 ## Feature highlights (see [DESIGN.md](DESIGN.md) for full rationale on each)
 
-- Ingestion via existing wire protocols (Prometheus scrape, InfluxDB line protocol, Prometheus remote-write) — no `/proc`/`/sys` collection code to maintain, and any exporter or Telegraf agent works unmodified.
+- Built-in self-monitoring (`/proc`+`/sys` on Linux, `sysctl`/`vm_stat`/`netstat` on macOS — see [RELEASE/v0.5.0.md](RELEASE/v0.5.0.md)) for zero-config host visibility, plus ingestion via existing wire protocols (Prometheus scrape, InfluxDB line protocol, Prometheus remote-write) for everything else — any exporter or Telegraf agent works unmodified.
 - Fixed-size round-robin storage (RRD-style tiers) with Gorilla-style delta+XOR compression — constant disk footprint regardless of how long Circa runs.
 - Embedded static dashboard (uPlot charts, `go:embed`) — no Node.js, no separate frontend deploy.
 - Prometheus remote-write push **and** pull ingestion, both feature-flagged off by default.

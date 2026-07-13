@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/teochenglim/circa/internal/alert"
 	"github.com/teochenglim/circa/internal/alert/notify"
 	"github.com/teochenglim/circa/internal/anomaly"
+	"github.com/teochenglim/circa/internal/collect"
 	"github.com/teochenglim/circa/internal/config"
 	"github.com/teochenglim/circa/internal/httpapi"
 	"github.com/teochenglim/circa/internal/ingest"
@@ -155,8 +157,37 @@ func run(configPath string, logger *slog.Logger) error {
 		go detector.Run(ctx)
 	}
 
+	// Built-in local system collection (v0.5.0) is circa's actual
+	// zero-config path now — on by default (CollectEnabled), unlike every
+	// other feature flag; see RELEASE/v0.5.0.md and DefaultTemplateOptions'
+	// doc comment. Downward API env vars (set in k8s/20-daemonset.yaml and
+	// helm/circa's daemonset.yaml) tag every sample with which pod/node/
+	// namespace it came from, so a DaemonSet's per-node metrics stay
+	// distinguishable once federated (v0.7.0) — see Collector.labels'
+	// doc comment in internal/collect.
+	if cfg.CollectEnabled() {
+		if collect.Supported() {
+			collectLabels := map[string]string{}
+			if v := os.Getenv("POD_NAME"); v != "" {
+				collectLabels["pod"] = v
+			}
+			if v := os.Getenv("POD_NAMESPACE"); v != "" {
+				collectLabels["namespace"] = v
+			}
+			if v := os.Getenv("NODE_NAME"); v != "" {
+				collectLabels["node"] = v
+			}
+			collector := collect.New(handleSample, logger, collectLabels)
+			go collector.Run(ctx, time.Duration(cfg.Ingest.Collect.Interval))
+		} else {
+			logger.Warn("features.collect is on (default) but unsupported on this platform",
+				"goos", runtime.GOOS, "see", "RELEASE/v1.1.0.md")
+		}
+	}
+
 	// Push receive/send are both feature-flagged off by default (DESIGN/04
-	// §4.4) — pull scraping remains the zero-config path.
+	// §4.4) — self-collection plus pull scraping remain the zero-config
+	// paths, push is the opt-in escape hatch for unreachable/NAT'd hosts.
 	var writeReceiver http.Handler
 	if cfg.Features.PushReceive {
 		writeReceiver = remotewrite.ReceiveHandler(handleSample, logger)
@@ -178,7 +209,8 @@ func run(configPath string, logger *slog.Logger) error {
 	serveErr := make(chan error, 1)
 	go func() {
 		logger.Info("circa listening", "address", cfg.Server.ListenAddress, "targets", len(targets),
-			"auth", len(cfg.Auth.Users) > 0, "push_receive", cfg.Features.PushReceive, "push_send", cfg.Features.PushSend,
+			"collect", cfg.CollectEnabled() && collect.Supported(), "auth", len(cfg.Auth.Users) > 0,
+			"push_receive", cfg.Features.PushReceive, "push_send", cfg.Features.PushSend,
 			"alerts", cfg.Features.Alerts, "ml", cfg.Features.ML)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serveErr <- err

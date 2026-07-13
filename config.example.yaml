@@ -1,17 +1,22 @@
 # Circa configuration - single file, feature flags gate every optional
 # subsystem. Copy to config.yaml, then: circa --config config.yaml
-# (or `circa config init` once that CLI exists - see DESIGN/08 §8.1.2).
+# (or `circa config init` - see DESIGN/08 §8.1.2).
 #
-# Anything under a feature's own key (alerting/backup/ingest.influx/push/*) is
-# only read if that feature's flag below is true - see
-# DESIGN/08_design_config_auth_ops.md. ingest.scrape is the exception: it
-# always runs, an empty target list just means nothing is collected.
+# Circa is a self-monitoring single binary: with no config at all it already
+# collects its own host's cpu/memory/disk/network (features.collect, see
+# RELEASE/v0.5.0.md) - nothing below is required to see something in the
+# dashboard. Anything under a feature's own key (alerting/backup/
+# ingest.influx/push/*) is only read if that feature's flag below is true -
+# see DESIGN/08_design_config_auth_ops.md. ingest.scrape is the exception:
+# it always runs, an empty target list just means no *additional* hosts are
+# scraped beyond what circa collects about itself.
 
 server:
   listen_address: ":9100"
   # TLS is optional; if omitted, serves plain HTTP (fine for localhost/trusted networks)
 
 features:
+  collect: true        # built-in local system metrics - the zero-config default (v0.5.0)
   ml: false            # anomaly detection - CPU-hungry, off by default
   alerts: false         # rule engine + notifications
   backup: false         # CDC export to Iceberg
@@ -20,11 +25,15 @@ features:
   push_send: false      # push ingested metrics onward
 
 ingest:
-  scrape:                        # always on; empty targets = nothing collected
-    targets:
-      - url: http://localhost:9100/metrics   # e.g. a co-located node_exporter
-        interval: 15s
-        labels: { job: node }
+  collect:                       # only read if features.collect is true (default true)
+    interval: 15s
+  scrape:                        # always on; empty targets = nothing extra beyond self-collection
+    targets: []
+    # add entries here to scrape another host or exporter, e.g.:
+    # targets:
+    #   - url: http://node2:9100/metrics
+    #     interval: 15s
+    #     labels: { job: node }
   influx:              # only read if features.influx_receive is true
     path: /write
 
