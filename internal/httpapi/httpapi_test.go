@@ -24,7 +24,7 @@ func newTestEngine(t *testing.T) *query.Engine {
 }
 
 func TestHealthz(t *testing.T) {
-	router := NewRouter(newTestEngine(t))
+	router := NewRouter(newTestEngine(t), Options{})
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -35,7 +35,7 @@ func TestHealthz(t *testing.T) {
 }
 
 func TestQueryRangeMissingMetric(t *testing.T) {
-	router := NewRouter(newTestEngine(t))
+	router := NewRouter(newTestEngine(t), Options{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/query_range?start=0&end=1", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -58,7 +58,7 @@ func TestQueryRangeReturnsIngestedPoints(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 
-	router := NewRouter(query.New(store))
+	router := NewRouter(query.New(store), Options{})
 	url := "/api/v1/query_range?metric=up&labels=job=node&start=" +
 		strconv.FormatInt(now.Add(-time.Minute).Unix(), 10) +
 		"&end=" + strconv.FormatInt(now.Add(time.Minute).Unix(), 10)
@@ -89,7 +89,7 @@ func TestQueryRangeReturnsIngestedPoints(t *testing.T) {
 }
 
 func TestQueryRangeInvalidTimeRange(t *testing.T) {
-	router := NewRouter(newTestEngine(t))
+	router := NewRouter(newTestEngine(t), Options{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/query_range?metric=up&start=100&end=50", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -100,7 +100,7 @@ func TestQueryRangeInvalidTimeRange(t *testing.T) {
 }
 
 func TestQueryRangeInvalidTier(t *testing.T) {
-	router := NewRouter(newTestEngine(t))
+	router := NewRouter(newTestEngine(t), Options{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/query_range?metric=up&start=0&end=1&tier=bogus", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -118,7 +118,7 @@ func TestQueryRangeMinuteTierReturnsMinAvgMax(t *testing.T) {
 	defer store.Close()
 
 	base := time.Unix(0, 0).Truncate(time.Minute)
-	router := NewRouter(query.New(store))
+	router := NewRouter(query.New(store), Options{})
 
 	for _, tc := range []struct {
 		offsetSec int
@@ -166,7 +166,7 @@ func TestSeriesEndpointListsIngestedSeries(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 
-	router := NewRouter(query.New(store))
+	router := NewRouter(query.New(store), Options{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/series", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -189,7 +189,7 @@ func TestSeriesEndpointListsIngestedSeries(t *testing.T) {
 }
 
 func TestIndexPageServesDashboard(t *testing.T) {
-	router := NewRouter(newTestEngine(t))
+	router := NewRouter(newTestEngine(t), Options{})
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)

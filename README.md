@@ -48,6 +48,8 @@ cp config.example.yaml config.yaml
 circa -config config.yaml
 ```
 
+Or generate one instead of copying the example: `circa config init` (add `--profile full` to turn every feature flag on for a demo/eval run, or `--hostname`/`--listen`/`--retention.*` for targeted overrides). Validate a config before rolling it out with `circa config check config.yaml` — it reports every problem found (bad cross-field combination, missing required field for an enabled feature), not just the first.
+
 | Section | Controls |
 | :--- | :--- |
 | `server` | Listen address, optional TLS |
@@ -60,6 +62,20 @@ circa -config config.yaml
 | `auth` | Bcrypt-hashed users for basic auth; empty/absent = no auth |
 
 Full field-by-field rationale is in [DESIGN/08_design_config_auth_ops.md](DESIGN/08_design_config_auth_ops.md).
+
+### Auth
+
+No authentication by default. To require login, add a user — this bcrypt-hashes the password and writes it into `auth.users` in place (comments elsewhere in the file are preserved):
+
+```bash
+circa auth add-user admin -config config.yaml         # prompts for a password (not echoed)
+circa auth reset-password admin -config config.yaml   # change an existing user's password
+circa auth hash-password                               # just prints a bcrypt hash — paste it into auth.users yourself
+```
+
+`hash-password` doesn't touch any file — use it when you'd rather edit `config.yaml` by hand (or generate hashes for multiple config files, or in CI) instead of letting `add-user`/`reset-password` write to a specific file for you.
+
+Every user in `auth.users` gets full access — this is authentication, not per-user authorization (see [DESIGN/08](DESIGN/08_design_config_auth_ops.md) §8.2.1). `GET /healthz`/`/readyz` stay open even with auth on, for liveness/readiness probes; everything else, including the dashboard and `GET /status` (the effective config, secrets redacted), requires it once any user exists.
 
 ## Development
 

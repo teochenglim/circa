@@ -1,7 +1,7 @@
 // Package httpapi wires circa's HTTP routes: /api/v1/query_range,
-// /api/v1/series, /healthz, /readyz, and the dashboard (/, /static/*) from
-// the web package. /metrics, /status, and the write receivers all arrive in
-// later milestones per RELEASE.md.
+// /api/v1/series, /status, /healthz, /readyz, the dashboard (/, /static/*)
+// from the web package, and — when enabled — the remote-write receiver.
+// /metrics arrives in a later milestone per RELEASE.md.
 package httpapi
 
 import (
@@ -11,20 +11,66 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/teochenglim/circa/internal/auth"
+	"github.com/teochenglim/circa/internal/config"
 	"github.com/teochenglim/circa/internal/query"
 	"github.com/teochenglim/circa/internal/storage"
 	"github.com/teochenglim/circa/web"
 )
 
+// Options configures the optional parts of the router beyond the always-on
+// query/series/status/healthz/dashboard routes.
+type Options struct {
+	// Config is the effective, merged config — used to render /status
+	// (redacted, per DESIGN/08 §8.3) and to gate auth. Zero value behaves
+	// like config.Default() with no auth users, matching config.Default().
+	Config config.Config
+	// WriteReceiver serves POST <Config.Push.Receive.Path> when non-nil —
+	// wire it up only when features.push_receive is on (DESIGN/04 §4.4.1).
+	WriteReceiver http.Handler
+}
+
 // NewRouter builds the HTTP handler for circa's API surface and dashboard.
-func NewRouter(engine *query.Engine) http.Handler {
+// /healthz and /readyz are always served unauthenticated (liveness/readiness
+// probes shouldn't need credentials); everything else is wrapped in basic
+// auth per opts.Config.Auth.Users — an empty/nil map disables auth entirely,
+// matching the no-auth default (DESIGN/08 §8.2.1).
+func NewRouter(engine *query.Engine, opts Options) http.Handler {
+	protected := http.NewServeMux()
+	protected.HandleFunc("GET /api/v1/query_range", queryRangeHandler(engine))
+	protected.HandleFunc("GET /api/v1/series", seriesHandler(engine))
+	protected.HandleFunc("GET /status", statusHandler(opts.Config))
+	if opts.WriteReceiver != nil {
+		path := opts.Config.Push.Receive.Path
+		if path == "" {
+			path = config.DefaultPushReceivePath
+		}
+		protected.Handle("POST "+path, opts.WriteReceiver)
+	}
+	protected.Handle("/", web.Handler())
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/query_range", queryRangeHandler(engine))
-	mux.HandleFunc("GET /api/v1/series", seriesHandler(engine))
 	mux.HandleFunc("GET /healthz", healthzHandler)
 	mux.HandleFunc("GET /readyz", healthzHandler)
-	mux.Handle("/", web.Handler())
+	mux.Handle("/", auth.Middleware(opts.Config.Auth.Users, protected))
 	return mux
+}
+
+// statusHandler serves GET /status — the effective merged config as
+// read-only YAML, secrets redacted (DESIGN/08 §8.3).
+func statusHandler(cfg config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		out, err := yaml.Marshal(cfg.Redacted())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write(out)
+	}
 }
 
 func healthzHandler(w http.ResponseWriter, r *http.Request) {
