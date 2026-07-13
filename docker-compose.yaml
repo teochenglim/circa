@@ -1,0 +1,22 @@
+# Single container, local volume for RRD data - no external database needed
+# (unlike a typical web app stack, Circa has no DB dependency at all: see
+# DESIGN/03_design_storage.md for why storage is a local, self-contained
+# round-robin structure, not a Postgres/MySQL-backed store).
+name: circa
+
+services:
+  circa:
+    build: .
+    image: circa:local
+    ports:
+      - "9100:9100"
+    environment:
+      CIRCA_LISTEN_ADDRESS: ":9100"
+      CIRCA_STORAGE_PATH: "/data"
+    volumes:
+      - circa-data:/data
+      - ./config.yaml:/etc/circa/config.yaml:ro
+    restart: unless-stopped
+
+volumes:
+  circa-data:

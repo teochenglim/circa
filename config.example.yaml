@@ -1,0 +1,60 @@
+# Circa configuration - single file, feature flags gate every optional
+# subsystem. Copy to config.yaml, then: circa --config config.yaml
+# (or `circa config init` once that CLI exists - see DESIGN/08 §8.1.2).
+#
+# Anything under a feature's own key (alerting/backup/ingest.influx/push/*) is
+# only read if that feature's flag below is true - see
+# DESIGN/08_design_config_auth_ops.md. ingest.scrape is the exception: it
+# always runs, an empty target list just means nothing is collected.
+
+server:
+  listen_address: ":9100"
+  # TLS is optional; if omitted, serves plain HTTP (fine for localhost/trusted networks)
+
+features:
+  ml: false            # anomaly detection - CPU-hungry, off by default
+  alerts: false         # rule engine + notifications
+  backup: false         # CDC export to Iceberg
+  influx_receive: false # accept InfluxDB line protocol from Telegraf
+  push_receive: false   # accept incoming remote_write pushes
+  push_send: false      # push ingested metrics onward
+
+ingest:
+  scrape:                        # always on; empty targets = nothing collected
+    targets:
+      - url: http://localhost:9100/metrics   # e.g. a co-located node_exporter
+        interval: 15s
+        labels: { job: node }
+  influx:              # only read if features.influx_receive is true
+    path: /write
+
+storage:
+  path: /var/lib/circa/data
+  retention:
+    raw: 2h
+    minute: 7d
+    hour: 365d
+
+alerting:            # only read if features.alerts is true
+  rules: []
+  notifiers: []
+
+backup:               # only read if features.backup is true
+  mode: pull           # push | pull
+  schedule: "*/15 * * * *"
+  catalog:
+    uri: https://iceberg-catalog.internal:8181
+    warehouse: s3://metrics-lake/circa
+
+push:
+  receive:            # only read if features.push_receive is true
+    path: /api/v1/write
+  send:                # only read if features.push_send is true
+    url: https://central-receiver.internal/api/v1/write
+    interval: 30s
+
+auth:
+  # absent or empty = no auth (default) - fine for localhost/trusted networks
+  users:
+    admin: "$2b$12$..."   # bcrypt hash, same convention as Prometheus's exporter-toolkit
+    viewer: "$2b$12$..."

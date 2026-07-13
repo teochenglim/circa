@@ -1,0 +1,76 @@
+# Default values for the circa chart - see helm/circa/README.md for the
+# full reference and DESIGN/08_design_config_auth_ops.md for the config
+# model this maps onto.
+
+image:
+  # Published by .github/workflows/release.yml's docker job on every
+  # tagged release. Override to your own registry/build if you forked or
+  # build locally (see helm/circa/README.md and `make docker-build`).
+  repository: ghcr.io/teochenglim/circa
+  # Empty by default: falls back to .Chart.AppVersion (see
+  # helm/circa/templates/daemonset.yaml), which `make bump`/`make release`
+  # keeps in sync with VERSION — so a plain `helm upgrade` tracks whatever
+  # circa version this chart checkout actually is, not a floating `latest`
+  # that could silently drift ahead of what was tested. Set explicitly to
+  # pin to something else.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+listenAddress: ":9100"
+
+# Mirrors config.example.yaml's `features` block - every optional subsystem
+# off by default so the baseline footprint stays lean.
+features:
+  ml: false
+  alerts: false
+  backup: false
+  influxReceive: false
+  pushReceive: false
+  pushSend: false
+
+# What Circa scrapes - a co-located node_exporter by default (this DaemonSet
+# runs with hostNetwork, so localhost reaches the node's own exporter(s)).
+# Add more targets for other local exporters; no Circa code change needed.
+ingest:
+  scrape:
+    targets:
+      - url: http://localhost:9100/metrics
+        interval: 15s
+        labels:
+          job: node
+
+storage:
+  # Node-local hostPath - see helm/circa/README.md for the durability tradeoff.
+  hostPath: /var/lib/circa/data
+  retention:
+    raw: 2h
+    minute: 7d
+    hour: 365d
+
+# Bcrypt-hashed users for basic auth - empty map = no auth (default).
+# Set via --set-string or a values override file; never commit real hashes.
+auth:
+  users: {}
+
+# Populate via --set-string or a separate values-secrets.yaml kept out of
+# git, e.g. for alert notifier webhooks or backup catalog credentials.
+secrets:
+  alertWebhookURL: ""
+  backupS3AccessKey: ""
+  backupS3SecretKey: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+tolerations:
+  - operator: Exists
+    effect: NoSchedule
+
+# DaemonSet runs with hostNetwork so /metrics is reachable at <node-ip>:9100
+# without an extra hop - see helm/circa/README.md.
+hostNetwork: true

@@ -1,0 +1,30 @@
+# Build artifacts (anchored to repo root - a bare "circa" pattern would also
+# match the cmd/circa/ *source* directory and exclude it from git!)
+/bin/
+/dist/
+/circa
+/circa.exe
+*.test
+*.out
+
+# Local RRD storage (tier-0/1/2 ring buffer files + backup watermark state)
+/data/
+*.rrd
+*.tsz
+
+# Local config/secrets (see config.example.yaml, k8s/*.example.yaml, helm/circa/values.yaml overrides)
+config.yaml
+.env
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Coverage
+coverage.out
+coverage.html
+
+# Claude
+.serena/
+.claude/

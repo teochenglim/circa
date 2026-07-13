@@ -1,0 +1,27 @@
+# Local mirror of .github/workflows/security.yml's 3 scan jobs, run before
+# every commit instead of waiting for CI to catch them. All three hooks call
+# tools already required for `make` (trivy, semgrep, docker) — no extra
+# toolchain to install beyond `pre-commit install` once per clone.
+repos:
+  - repo: local
+    hooks:
+      - id: semgrep
+        name: Semgrep SAST (p/golang, p/sql-injection, p/secrets, p/owasp-top-ten)
+        entry: semgrep scan --config p/golang --config p/sql-injection --config p/secrets --config p/owasp-top-ten --error
+        language: system
+        files: \.go$
+        pass_filenames: false
+
+      - id: trivy-fs
+        name: Trivy filesystem scan (Go module CVEs, fails on CRITICAL/HIGH)
+        entry: trivy fs --scanners vuln --severity CRITICAL,HIGH --exit-code 1 .
+        language: system
+        files: ^go\.(mod|sum)$
+        pass_filenames: false
+
+      - id: trivy-image
+        name: Trivy image scan (builds Dockerfile, fails on CRITICAL/HIGH)
+        entry: sh -c 'docker build -t circa:precommit-scan . && trivy image --scanners vuln --severity CRITICAL,HIGH --exit-code 1 circa:precommit-scan'
+        language: system
+        files: (\.go$|^go\.(mod|sum)$|^Dockerfile$)
+        pass_filenames: false

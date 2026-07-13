@@ -1,0 +1,36 @@
+# Non-secret settings, mounted as a file so Circa's single-YAML-config model
+# (DESIGN/08 §8.1.1) still holds inside the cluster - no env-var sprawl.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: circa-config
+data:
+  config.yaml: |
+    server:
+      listen_address: ":9100"
+
+    features:
+      ml: false
+      alerts: false
+      backup: false
+      influx_receive: false
+      push_receive: false
+      push_send: false
+
+    # Scrapes the node's own node_exporter (deployed separately) over
+    # localhost - this pod runs with hostNetwork, see 20-daemonset.yaml.
+    ingest:
+      scrape:
+        targets:
+          - url: http://localhost:9100/metrics
+            interval: 15s
+            labels: { job: node }
+
+    storage:
+      path: /data
+      retention:
+        raw: 2h
+        minute: 7d
+        hour: 365d
+
+    auth: {}   # empty = no auth by default; see 11-secret.example.yaml to enable

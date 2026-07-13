@@ -1,0 +1,16 @@
+# Headless service: DNS-based per-pod discovery (each pod gets its own A
+# record), not a load-balanced single frontend - there's no single "the
+# dashboard", each node has its own (see k8s/README.md). Useful for a
+# central backup agent (pull-mode CDC export, DESIGN/07 §7.3) or a
+# Prometheus scrape_config targeting every pod individually.
+apiVersion: v1
+kind: Service
+metadata:
+  name: circa
+spec:
+  clusterIP: None
+  selector:
+    app: circa
+  ports:
+    - port: 9100
+      targetPort: 9100

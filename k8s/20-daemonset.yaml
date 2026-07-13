@@ -1,0 +1,68 @@
+# One Circa pod per node - scrapes that node's co-located exporter(s) (e.g.
+# node_exporter, deployed separately) over localhost via hostNetwork, rather
+# than reading /proc or /sys itself. Not a Deployment: there is no "replica
+# count" dimension to scale here (ARCHITECTURE.md "Deployment shape").
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: circa
+spec:
+  selector:
+    matchLabels:
+      app: circa
+  template:
+    metadata:
+      labels:
+        app: circa
+    spec:
+      # Run on every node, including control-plane nodes - skipping control-plane
+      # nodes defeats the point of fleet-wide coverage.
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: circa
+          image: "ghcr.io/teochenglim/circa:0.1.0"
+          args: ["-config", "/etc/circa/config.yaml"]
+          ports:
+            - containerPort: 9100
+              hostPort: 9100
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          envFrom:
+            - secretRef:
+                name: circa-secrets
+                optional: true
+          readinessProbe:
+            httpGet: { path: /healthz, port: 9100 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 9100 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi } # bump if features.ml is enabled - see DESIGN/06 §6.2
+          volumeMounts:
+            - name: config
+              mountPath: /etc/circa
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: circa-config
+        - name: data
+          # Node-local RRD storage: survives pod restarts on the same node,
+          # lost if the node itself is replaced - acceptable since long-term
+          # retention is meant to flow through the backup feature (DESIGN/07),
+          # not rely on the local volume being durable.
+          hostPath: { path: /var/lib/circa/data, type: DirectoryOrCreate }

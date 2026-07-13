@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "circa.fullname" . }}-config
+  labels:
+    {{- include "circa.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    server:
+      listen_address: "{{ .Values.listenAddress }}"
+
+    features:
+      ml: {{ .Values.features.ml }}
+      alerts: {{ .Values.features.alerts }}
+      backup: {{ .Values.features.backup }}
+      influx_receive: {{ .Values.features.influxReceive }}
+      push_receive: {{ .Values.features.pushReceive }}
+      push_send: {{ .Values.features.pushSend }}
+
+    ingest:
+      scrape:
+        targets:
+          {{- range .Values.ingest.scrape.targets }}
+          - url: {{ .url }}
+            interval: {{ .interval }}
+            labels: {{ .labels | toJson }}
+          {{- end }}
+
+    storage:
+      path: /data
+      retention:
+        raw: {{ .Values.storage.retention.raw }}
+        minute: {{ .Values.storage.retention.minute }}
+        hour: {{ .Values.storage.retention.hour }}
+
+    {{- if .Values.auth.users }}
+    auth:
+      users:
+        {{- range $user, $hash := .Values.auth.users }}
+        {{ $user }}: "{{ $hash }}"
+        {{- end }}
+    {{- else }}
+    auth: {}
+    {{- end }}

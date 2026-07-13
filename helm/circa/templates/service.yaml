@@ -1,0 +1,15 @@
+# Headless - one DNS record per pod, not a load-balanced frontend. See
+# helm/circa/README.md for why (per-node dashboard, no single "the UI").
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "circa.fullname" . }}
+  labels:
+    {{- include "circa.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    app: {{ include "circa.fullname" . }}
+  ports:
+    - port: 9100
+      targetPort: 9100

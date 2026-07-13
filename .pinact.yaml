@@ -1,0 +1,9 @@
+# pinact - https://github.com/suzuki-shunsuke/pinact
+# Config for `make github-action-bump`.
+#
+# actions/download-artifact publishes a "v3.1.0-node20" compatibility tag with
+# a *newer* published_at than v8.x (a backport release), which fools naive
+# "most recently published release" version resolution into treating it as
+# latest. Pin it manually instead.
+ignore_actions:
+  - name: actions/download-artifact

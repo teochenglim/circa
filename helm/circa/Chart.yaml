@@ -1,0 +1,14 @@
+apiVersion: v2
+name: circa
+description: Single-binary metrics aggregator with embedded RRD storage, dashboard, alerting, and anomaly detection, over any Prometheus exporter/Telegraf/remote-write source.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/circa/circa
+sources:
+  - https://github.com/circa/circa
+keywords:
+  - monitoring
+  - prometheus
+  - metrics
+  - observability
