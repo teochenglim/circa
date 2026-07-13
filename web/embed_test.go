@@ -21,18 +21,20 @@ func TestIndexPageServesHTML(t *testing.T) {
 }
 
 // TestEveryPageServesHTML covers the v0.6.0 per-category pages (CPU,
-// Memory, Network, Disk, Filesystem, Load) and the Metrics page — each is
-// its own route/template (see embed.go's pages map), not a client-side tab.
+// Memory, Network, Disk, Filesystem, Load), the Metrics page, and v1.0.0's
+// Self-metrics page — each is its own route/template (see embed.go's pages
+// map), not a client-side tab.
 func TestEveryPageServesHTML(t *testing.T) {
 	for path, wantTitle := range map[string]string{
-		"/":           "Circa — Overall",
-		"/cpu":        "Circa — CPU",
-		"/memory":     "Circa — Memory",
-		"/network":    "Circa — Network",
-		"/disk":       "Circa — Disk",
-		"/filesystem": "Circa — Filesystem",
-		"/load":       "Circa — Load",
-		"/metrics":    "Circa — Metrics",
+		"/":             "Circa — Overall",
+		"/cpu":          "Circa — CPU",
+		"/memory":       "Circa — Memory",
+		"/network":      "Circa — Network",
+		"/disk":         "Circa — Disk",
+		"/filesystem":   "Circa — Filesystem",
+		"/load":         "Circa — Load",
+		"/metrics":      "Circa — Metrics",
+		"/self-metrics": "Circa — Self-metrics",
 	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
@@ -59,6 +61,7 @@ func TestStaticAssetsAreServed(t *testing.T) {
 		"/static/js/app.js",
 		"/static/js/overview.js",
 		"/static/js/detail.js",
+		"/static/js/selfmetrics.js",
 		"/static/css/uPlot.min.css",
 		"/static/css/app.css",
 		"/static/img/favicon.svg",

@@ -23,6 +23,7 @@
   --cat-disk: #fb7185;
   --cat-filesystem: #38bdf8;
   --cat-load: #34d399;
+  --cat-self: #2dd4bf; /* self-metrics page (v1.0.0) - deliberately the brand accent itself, not a new hue: this category is circa observing circa, not another host subsystem */
 
   --severity-critical: #e11d48;
   --severity-warning: #d97706;
@@ -56,6 +57,7 @@
 .cat-disk       { --card-accent: var(--cat-disk);       --heading-accent: var(--cat-disk); }
 .cat-filesystem { --card-accent: var(--cat-filesystem); --heading-accent: var(--cat-filesystem); }
 .cat-load       { --card-accent: var(--cat-load);       --heading-accent: var(--cat-load); }
+.cat-self       { --card-accent: var(--cat-self);       --heading-accent: var(--cat-self); }
 
 * {
   box-sizing: border-box;
@@ -261,6 +263,14 @@ main {
 
 .overview-chart {
   height: 140px;
+}
+
+.stat-value {
+  font-size: 1.9rem;
+  font-weight: 700;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  margin: 0;
+  color: var(--fg);
 }
 
 #chart {

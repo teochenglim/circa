@@ -1,0 +1,34 @@
+[Unit]
+Description=Circa metrics aggregator
+Documentation=https://github.com/teochenglim/circa
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/circa -config /etc/circa/config.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Circa is a per-node local agent (see ../../ARCHITECTURE.md "Deployment
+# shape"), so this unit targets exactly the bare-metal/VM host it runs on —
+# one instance, reading that host's own /proc /sys directly (features.collect,
+# default on), no container/orchestrator layer required.
+User=circa
+Group=circa
+WorkingDirectory=/var/lib/circa
+StateDirectory=circa
+StateDirectoryMode=0750
+
+# Hardening: circa needs nothing beyond reading /proc, /sys, and its own
+# state directory, so lock everything else down. NoNewPrivileges +
+# ProtectSystem=strict + a narrow ReadWritePaths is the same shape
+# node_exporter's own packaged unit uses.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/circa
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

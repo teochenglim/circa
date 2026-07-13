@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Circa — Self-metrics</title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+  <link rel="stylesheet" href="/static/css/uPlot.min.css">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <header>
+    <h1><span class="live-dot" aria-hidden="true"></span>Circa</h1>
+  </header>
+  {{template "nav" .}}
+
+  <main>
+    <h2 class="page-heading cat-self">circa's own footprint — real, live process state, polled every 5s (not stored history)</h2>
+
+    <section class="overview-grid" style="margin-bottom: 1.5rem;">
+      <div class="overview-card cat-self">
+        <h3>Goroutines</h3>
+        <p class="stat-value" id="stat-goroutines">—</p>
+      </div>
+      <div class="overview-card cat-self">
+        <h3>Heap in use</h3>
+        <p class="stat-value" id="stat-heap">—</p>
+      </div>
+    </section>
+
+    <h2 class="page-heading cat-self">HTTP (internal/httpapi)</h2>
+    <section class="overview-grid">
+      <div class="overview-card cat-self"><h3>Requests/s</h3><div id="chart-http-requests" class="overview-chart">Loading…</div></div>
+      <div class="overview-card cat-self"><h3>5xx/s</h3><div id="chart-http-errors" class="overview-chart">Loading…</div></div>
+      <div class="overview-card cat-self"><h3>Avg latency</h3><div id="chart-http-latency" class="overview-chart">Loading…</div></div>
+    </section>
+
+    <h2 class="page-heading cat-self">Storage (internal/storage)</h2>
+    <section class="overview-grid">
+      <div class="overview-card cat-self"><h3>Writes/s</h3><div id="chart-storage-writes" class="overview-chart">Loading…</div></div>
+      <div class="overview-card cat-self"><h3>Write errors/s</h3><div id="chart-storage-errors" class="overview-chart">Loading…</div></div>
+    </section>
+
+    <h2 class="page-heading cat-self">Self-collection (internal/collect)</h2>
+    <section class="overview-grid">
+      <div class="overview-card cat-self"><h3>Ticks/s, by result</h3><div id="chart-collect-ticks" class="overview-chart">Loading…</div></div>
+      <div class="overview-card cat-self"><h3>Samples/s</h3><div id="chart-collect-samples" class="overview-chart">Loading…</div></div>
+    </section>
+
+    <h2 class="page-heading cat-self">Scrape (internal/ingest/scrape)</h2>
+    <section class="overview-grid">
+      <div class="overview-card cat-self"><h3>Requests/s, by target</h3><div id="chart-scrape-requests" class="overview-chart">Loading…</div></div>
+      <div class="overview-card cat-self"><h3>Errors/s, by target</h3><div id="chart-scrape-errors" class="overview-chart">Loading…</div></div>
+    </section>
+
+    <h2 class="page-heading cat-self">Alerting (internal/alert)</h2>
+    <section class="overview-grid">
+      <div class="overview-card cat-self"><h3>Evaluations/s</h3><div id="chart-alert-evaluations" class="overview-chart">Loading…</div></div>
+      <div class="overview-card cat-self"><h3>Notify/s, by result</h3><div id="chart-alert-notify" class="overview-chart">Loading…</div></div>
+    </section>
+
+    <h2 class="page-heading cat-self">Anomaly detection (internal/anomaly)</h2>
+    <section class="overview-grid">
+      <div class="overview-card cat-self"><h3>Scores/s</h3><div id="chart-anomaly-scores" class="overview-chart">Loading…</div></div>
+      <div class="overview-card cat-self"><h3>Retrains/s, by result</h3><div id="chart-anomaly-retrains" class="overview-chart">Loading…</div></div>
+    </section>
+
+    <h2 class="page-heading cat-self">Backup (internal/backup)</h2>
+    <section class="overview-grid">
+      <div class="overview-card cat-self"><h3>Exports/s, by result</h3><div id="chart-backup-exports" class="overview-chart">Loading…</div></div>
+      <div class="overview-card cat-self"><h3>Rows exported/s</h3><div id="chart-backup-rows" class="overview-chart">Loading…</div></div>
+    </section>
+
+    <h2 class="page-heading cat-self">Remote-write (internal/ingest/remotewrite)</h2>
+    <section class="overview-grid">
+      <div class="overview-card cat-self"><h3>Receive samples/s</h3><div id="chart-remotewrite-receive" class="overview-chart">Loading…</div></div>
+      <div class="overview-card cat-self"><h3>Send/s, by result</h3><div id="chart-remotewrite-send" class="overview-chart">Loading…</div></div>
+    </section>
+  </main>
+
+  <script src="/static/js/uPlot.iife.min.js"></script>
+  <script src="/static/js/circa-chart.js"></script>
+  <script src="/static/js/circa-data.js"></script>
+  <script src="/static/js/selfmetrics.js"></script>
+</body>
+</html>

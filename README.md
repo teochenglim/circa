@@ -37,7 +37,19 @@ helm upgrade --install circa helm/circa
 
 See [helm/circa/README.md](helm/circa/README.md) for chart values.
 
+### Option 4 — systemd (bare metal / VM)
+
+Not containerizing this node at all? See [packaging/systemd/README.md](packaging/systemd/README.md) for the unit file and install steps — same per-node-agent shape, just without Docker/Kubernetes in between.
+
 Run `make` with no arguments to see every available target.
+
+### Sizing: how much disk will this actually use?
+
+```bash
+circa sizing -metrics 200   # estimate for ~200 distinct series (add -config config.yaml to size against real retention/interval settings)
+```
+
+Reports uncompressed vs. estimated-on-disk bytes per tier (raw/minute/hour), using v0.2.0's actually-measured Gorilla compression ratio as the default assumption rather than DESIGN/03 §3.3's ~10x aspiration — see [RELEASE/v0.2.0.md](RELEASE/v0.2.0.md) for where that number comes from, and pass `-ratio` to try a different one (e.g. a value you've measured against your own metric mix).
 
 ## Configuration
 
@@ -62,6 +74,21 @@ Or generate one instead of copying the example: `circa config init` (add `--prof
 | `auth` | Bcrypt-hashed users for basic auth; empty/absent = no auth |
 
 Full field-by-field rationale is in [DESIGN/08_design_config_auth_ops.md](DESIGN/08_design_config_auth_ops.md).
+
+#### What each feature flag actually costs (DESIGN/08 §8.1.3)
+
+The baseline (`collect` + always-on `scrape` client + `storage` + `/metrics`) should cost no more than node_exporter itself plus a small ring buffer — nothing below is required to see a working dashboard. Every flag past that is a deliberate, informed trade, not a free toggle:
+
+| Flag | Rough cost |
+| :--- | :--- |
+| `ml` | The single most CPU-hungry flag: `model_count` (default 18) k-means models trained per **distinct series**, retrained every `retrain_interval` on a `training_window` of history. Cost scales linearly with series count × model_count — fine at tens of series, worth tuning down at thousands. See [DESIGN/10](DESIGN/10_ml_summary.md). |
+| `alerts` | Cheap: rule evaluation is O(rules) per ingested sample, no extra storage. Cost only shows up in notifier dispatch (one outbound HTTP call per firing alert) — a slow/unreachable webhook adds latency to that call, not to ingestion itself. |
+| `backup` | A periodic (per `backup.schedule`) batch job: reads everything past its watermark from tier-1 storage, encodes to Arrow/Parquet, uploads to Iceberg. Cost is proportional to rows-since-last-export and export cadence, not continuous — negligible between runs. Pull mode moves this cost to the separate `circa backup-agent` process instead of every node. |
+| `push_receive` | Negligible: one more HTTP route, decoding protobuf+Snappy into the same ingest pipeline every other source already feeds. |
+| `push_send` | Negligible: one ticker + one outbound HTTP call per `push.send.interval`. |
+| `influx_receive` | Not implemented yet ([ARCHITECTURE.md](ARCHITECTURE.md) — planned, no milestone assigned). |
+
+Use `circa sizing` (above) for the storage-side cost specifically; this table is about CPU/memory, which sizing doesn't estimate.
 
 ### Auth
 

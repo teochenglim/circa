@@ -29,8 +29,9 @@ import (
 	"github.com/teochenglim/circa/internal/storage"
 )
 
-// circa <config|auth> ... are CLI subcommands (DESIGN/08 §8.1.2); with no
-// subcommand, circa runs the server, matching every version before v0.3.0.
+// circa <config|auth|backup-agent|sizing> ... are CLI subcommands
+// (DESIGN/08 §8.1.2, DESIGN/07 §7.3, DESIGN/03 §3.3); with no subcommand,
+// circa runs the server, matching every version before v0.3.0.
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -42,6 +43,9 @@ func main() {
 			return
 		case "backup-agent":
 			exitOnError(runBackupAgent(os.Args[2:]))
+			return
+		case "sizing":
+			exitOnError(runSizing(os.Args[2:]))
 			return
 		}
 	}

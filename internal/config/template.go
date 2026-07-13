@@ -116,13 +116,15 @@ server:
   listen_address: "{{.ListenAddress}}"
 
 features:
-  collect: true              # built-in local system metrics - the zero-config default (v0.5.0)
-  ml: {{.Full}}             # anomaly detection - CPU-hungry, off by default
-  alerts: {{.Full}}          # rule engine + notifications
-  backup: {{.Full}}          # CDC export to Iceberg
-  influx_receive: {{.Full}}  # accept InfluxDB line protocol from Telegraf
-  push_receive: {{.Full}}    # accept incoming remote_write pushes
-  push_send: {{.Full}}       # push ingested metrics onward
+  # Resource cost of each flag - see README.md "What each feature flag
+  # actually costs" / DESIGN/08 §8.1.3 for the full rationale.
+  collect: true              # built-in local system metrics - zero-config default (v0.5.0), negligible cost
+  ml: {{.Full}}             # anomaly detection - the CPU-hungry one: model_count models per series, off by default
+  alerts: {{.Full}}          # rule engine + notifications - cheap; cost is one HTTP call per firing alert
+  backup: {{.Full}}          # CDC export to Iceberg - periodic batch job, cost scales with rows since last export
+  influx_receive: {{.Full}}  # accept InfluxDB line protocol from Telegraf - not implemented yet, see ARCHITECTURE.md
+  push_receive: {{.Full}}    # accept incoming remote_write pushes - negligible, one more HTTP route
+  push_send: {{.Full}}       # push ingested metrics onward - negligible, one ticker + one HTTP call per interval
 
 ingest:
   collect:                       # only read if features.collect is true (default true)

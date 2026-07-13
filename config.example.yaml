@@ -16,13 +16,21 @@ server:
   # TLS is optional; if omitted, serves plain HTTP (fine for localhost/trusted networks)
 
 features:
-  collect: true        # built-in local system metrics - the zero-config default (v0.5.0)
-  ml: false            # anomaly detection - CPU-hungry, off by default
-  alerts: false         # rule engine + notifications
-  backup: false         # CDC export to Iceberg
-  influx_receive: false # accept InfluxDB line protocol from Telegraf
-  push_receive: false   # accept incoming remote_write pushes
-  push_send: false      # push ingested metrics onward
+  # Resource cost of each flag, so turning one on is an informed choice, not
+  # a surprise (README.md "What each feature flag actually costs", DESIGN/08
+  # §8.1.3). The baseline below (collect+scrape+storage+/metrics only) costs
+  # no more than node_exporter itself plus a small ring buffer.
+  collect: true        # built-in local system metrics - the zero-config default (v0.5.0); negligible cost
+  ml: false            # anomaly detection - the one CPU-hungry flag: model_count k-means models
+                       # per distinct series, retrained every retrain_interval; scales linearly
+                       # with series count x model_count - see DESIGN/10
+  alerts: false         # rule engine + notifications - cheap (O(rules) per sample); cost only
+                       # shows up as one outbound HTTP call per firing alert (notifier dispatch)
+  backup: false         # CDC export to Iceberg - a periodic batch job (per backup.schedule), cost
+                       # proportional to rows exported since the last watermark, not continuous
+  influx_receive: false # accept InfluxDB line protocol from Telegraf - not implemented yet, see ARCHITECTURE.md
+  push_receive: false   # accept incoming remote_write pushes - negligible, one more HTTP route
+  push_send: false      # push ingested metrics onward - negligible, one ticker + one HTTP call per interval
 
 ingest:
   collect:                       # only read if features.collect is true (default true)

@@ -1,8 +1,8 @@
 // Package httpapi wires circa's HTTP routes: /api/v1/query_range,
-// /api/v1/series, /api/v1/alerts, /api/v1/anomalies, /metrics, /status,
-// /healthz, /readyz, the dashboard (/, /static/*) from the web package,
-// and — when enabled — the remote-write receiver and (pull-mode backup)
-// /api/v1/backup_range.
+// /api/v1/series, /api/v1/alerts, /api/v1/anomalies, /api/v1/selfmetrics,
+// /metrics, /status, /healthz, /readyz, the dashboard (/, /static/*) from
+// the web package, and — when enabled — the remote-write receiver and
+// (pull-mode backup) /api/v1/backup_range.
 package httpapi
 
 import (
@@ -59,6 +59,7 @@ func NewRouter(engine *query.Engine, opts Options) http.Handler {
 	protected.HandleFunc("GET /api/v1/alerts", alertsHandler(opts.AlertEngine))
 	protected.HandleFunc("GET /api/v1/anomalies", anomaliesHandler(engine))
 	protected.HandleFunc("GET /metrics", metricsHandler(engine))
+	protected.HandleFunc("GET /api/v1/selfmetrics", selfMetricsHandler())
 	protected.HandleFunc("GET /status", statusHandler(opts.Config))
 	if opts.WriteReceiver != nil {
 		path := opts.Config.Push.Receive.Path

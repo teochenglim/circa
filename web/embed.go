@@ -7,8 +7,11 @@
 // Load), and Metrics (the original manual metric-picker chart + Alerts/
 // anomalies panels) — a real Netdata-style tab-per-page layout rather than
 // one page with JS-toggled sections, so each page only loads the JS/data it
-// actually needs and each has its own bookmarkable URL. nav.html's
-// `{{define "nav"}}` block is shared across all of them.
+// actually needs and each has its own bookmarkable URL. v1.0.0 added one
+// more: Self-metrics, visualizing circa's own RED self-metrics (v0.7.0)
+// polled live from GET /api/v1/selfmetrics rather than read back out of
+// internal/storage — see web/static/js/selfmetrics.js's doc comment.
+// nav.html's `{{define "nav"}}` block is shared across all of them.
 package web
 
 import (
@@ -35,14 +38,15 @@ type pageData struct {
 // pages maps each route to its template file (see template/*.html) and the
 // nav entry it should highlight.
 var pages = map[string]string{
-	"GET /{$}":        "index.html",
-	"GET /cpu":        "cpu.html",
-	"GET /memory":     "memory.html",
-	"GET /network":    "network.html",
-	"GET /disk":       "disk.html",
-	"GET /filesystem": "filesystem.html",
-	"GET /load":       "load.html",
-	"GET /metrics":    "metrics.html",
+	"GET /{$}":          "index.html",
+	"GET /cpu":          "cpu.html",
+	"GET /memory":       "memory.html",
+	"GET /network":      "network.html",
+	"GET /disk":         "disk.html",
+	"GET /filesystem":   "filesystem.html",
+	"GET /load":         "load.html",
+	"GET /metrics":      "metrics.html",
+	"GET /self-metrics": "selfmetrics.html",
 }
 
 // pageName strips the .html suffix from a template file name for pageData.Page
