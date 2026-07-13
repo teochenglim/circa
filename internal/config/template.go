@@ -31,6 +31,22 @@ func DefaultTemplateOptions() TemplateOptions {
 	}
 }
 
+// templateData is what the template actually executes against — embeds
+// TemplateOptions plus fields derived from it (Full) or from package-level
+// anomaly defaults, so the template stays a straight field reference with
+// no expression logic in the template text itself.
+type templateData struct {
+	TemplateOptions
+	Full                   bool
+	AnomalyModelCount      int
+	AnomalyTrainingWindow  string
+	AnomalyRetrainInterval string
+	AnomalyDiffN           int
+	AnomalySmoothN         int
+	AnomalyLagN            int
+	AnomalyScoreThreshold  float64
+}
+
 // GenerateTemplate renders a fully-commented, ready-to-run config.yaml.
 // "full" turns every feature flag on (with placeholder backup/push
 // endpoints) for evaluation/demo purposes; "minimal" leaves them all off.
@@ -61,10 +77,17 @@ func GenerateTemplate(opts TemplateOptions) (string, error) {
 
 	tmpl := template.Must(template.New("config").Parse(configTemplate))
 	var buf bytes.Buffer
-	data := struct {
-		TemplateOptions
-		Full bool
-	}{opts, opts.Profile == "full"}
+	data := templateData{
+		TemplateOptions:        opts,
+		Full:                   opts.Profile == "full",
+		AnomalyModelCount:      DefaultModelCount,
+		AnomalyTrainingWindow:  Duration(DefaultTrainingWindow).String(),
+		AnomalyRetrainInterval: Duration(DefaultRetrainInterval).String(),
+		AnomalyDiffN:           DefaultDiffN,
+		AnomalySmoothN:         DefaultSmoothN,
+		AnomalyLagN:            DefaultLagN,
+		AnomalyScoreThreshold:  DefaultScoreThreshold,
+	}
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", err
 	}
@@ -108,8 +131,33 @@ storage:
     hour: {{.RetentionHour}}
 
 alerting:            # only read if features.alerts is true
+{{- if .Full}}
+  rules:
+    - name: high_cpu
+      metric: node_cpu_seconds_total
+      labels: { mode: idle }
+      condition: { type: threshold, operator: "<", value: 10 }
+      for: 5m
+      severity: warning
+      notify: [ops-webhook]
+  notifiers:
+    - name: ops-webhook
+      type: webhook
+      url: https://example.internal/circa-alerts
+{{- else}}
   rules: []
   notifiers: []
+{{- end}}
+
+anomaly:              # only read if features.ml is true - DESIGN/06 §6.2,
+                      # DESIGN/10_ml_summary.md (defaults match Netdata's own)
+  model_count: {{.AnomalyModelCount}}            # ensemble size per metric
+  training_window: {{.AnomalyTrainingWindow}}    # history each new model trains on
+  retrain_interval: {{.AnomalyRetrainInterval}}  # how often a new model joins the ensemble
+  diff_n: {{.AnomalyDiffN}}                      # order of differencing (0 or 1)
+  smooth_n: {{.AnomalySmoothN}}                  # rolling-average window after differencing
+  lag_n: {{.AnomalyLagN}}                        # lagged values per feature vector
+  score_threshold: {{.AnomalyScoreThreshold}}    # 0..100 - anomaly score cutoff
 
 backup:               # only read if features.backup is true
   mode: pull           # push | pull

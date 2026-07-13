@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/teochenglim/circa/internal/alert"
 	"github.com/teochenglim/circa/internal/ingest"
 	"github.com/teochenglim/circa/internal/query"
 	"github.com/teochenglim/circa/internal/storage"
@@ -54,7 +55,7 @@ func TestQueryRangeReturnsIngestedPoints(t *testing.T) {
 
 	now := time.Now()
 	key := storage.SeriesKey{Name: "up", Labels: map[string]string{"job": "node"}}
-	if err := store.Raw.Append(key, time.Second, now, 1); err != nil {
+	if err := store.Raw.Append(key, time.Second, now, 1, false); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 
@@ -162,7 +163,7 @@ func TestSeriesEndpointListsIngestedSeries(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.Raw.Append(storage.SeriesKey{Name: "up", Labels: map[string]string{"job": "node"}}, time.Second, time.Now(), 1); err != nil {
+	if err := store.Raw.Append(storage.SeriesKey{Name: "up", Labels: map[string]string{"job": "node"}}, time.Second, time.Now(), 1, false); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 
@@ -204,4 +205,95 @@ func TestIndexPageServesDashboard(t *testing.T) {
 
 func sampleAt(name string, t time.Time, value float64) ingest.Sample {
 	return ingest.Sample{Name: name, Time: t, Value: value, Interval: 15 * time.Second}
+}
+
+func TestAlertsEndpointEmptyWithNilEngine(t *testing.T) {
+	router := NewRouter(newTestEngine(t), Options{}) // AlertEngine left nil
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/alerts", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp struct {
+		Status string        `json:"status"`
+		Data   []alert.Alert `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 0 {
+		t.Errorf("expected no alerts with a nil engine, got %+v", resp.Data)
+	}
+}
+
+func TestAlertsEndpointReturnsFiringAlerts(t *testing.T) {
+	rule := alert.Rule{
+		Name:      "high_cpu",
+		Metric:    "cpu",
+		Condition: alert.ThresholdCondition{Operator: ">", Value: 90},
+	}
+	engine := alert.New([]alert.Rule{rule}, nil, nil)
+	engine.Consume(ingest.Sample{Name: "cpu", Time: time.Now(), Value: 95})
+
+	router := NewRouter(newTestEngine(t), Options{AlertEngine: engine})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/alerts", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	var resp struct {
+		Status string        `json:"status"`
+		Data   []alert.Alert `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].RuleName != "high_cpu" {
+		t.Errorf("data = %+v", resp.Data)
+	}
+}
+
+func TestAnomaliesEndpointRanksAnomalousSeries(t *testing.T) {
+	store, err := storage.OpenTiered(t.TempDir(), time.Hour, 0, 0)
+	if err != nil {
+		t.Fatalf("storage.OpenTiered: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	key := storage.SeriesKey{Name: "latency"}
+	if err := store.Raw.Append(key, time.Second, now, 999, true); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	router := NewRouter(query.New(store), Options{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/anomalies", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp struct {
+		Status string              `json:"status"`
+		Data   []query.AnomalyRank `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].Metric["__name__"] != "latency" || resp.Data[0].Rate != 1.0 {
+		t.Errorf("data = %+v", resp.Data)
+	}
+}
+
+func TestAnomaliesEndpointRejectsInvalidWindow(t *testing.T) {
+	router := NewRouter(newTestEngine(t), Options{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?window=not-a-number", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
 }

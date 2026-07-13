@@ -13,6 +13,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/teochenglim/circa/internal/alert"
+	"github.com/teochenglim/circa/internal/alert/notify"
+	"github.com/teochenglim/circa/internal/anomaly"
 	"github.com/teochenglim/circa/internal/config"
 	"github.com/teochenglim/circa/internal/httpapi"
 	"github.com/teochenglim/circa/internal/ingest"
@@ -70,8 +73,63 @@ func run(configPath string, logger *slog.Logger) error {
 	}
 	defer store.Close()
 
-	pipeline := ingest.New(store)
+	engine := query.New(store)
+
+	// Anomaly detection is feature-flagged off by default (DESIGN/06 §6.2) —
+	// the single most CPU-hungry optional subsystem. When on, Score runs
+	// ahead of ingest.Pipeline.Ingest (not as a fanned-out Consumer) so the
+	// anomaly bit is already known by the time internal/storage embeds it
+	// into the value it writes — see internal/anomaly's package doc comment.
+	var detector *anomaly.Detector
+	if cfg.Features.ML {
+		detector = anomaly.New(anomaly.Config{
+			ModelCount:      cfg.Anomaly.ModelCount,
+			TrainingWindow:  time.Duration(cfg.Anomaly.TrainingWindow),
+			RetrainInterval: time.Duration(cfg.Anomaly.RetrainInterval),
+			DiffN:           cfg.Anomaly.DiffN,
+			SmoothN:         cfg.Anomaly.SmoothN,
+			LagN:            cfg.Anomaly.LagN,
+			ScoreThreshold:  cfg.Anomaly.ScoreThreshold,
+		}, engine, logger)
+	}
+
+	// Alerting is feature-flagged off by default (DESIGN/06 §6.1). Rule
+	// parsing can only fail on a condition.type config.Validate should
+	// already have rejected, so an error here means Validate and NewRule
+	// have drifted apart — fail loudly rather than silently drop a rule.
+	var alertEngine *alert.Engine
+	if cfg.Features.Alerts {
+		notifiers := make(map[string]alert.Notifier, len(cfg.Alerting.Notifiers))
+		for _, n := range cfg.Alerting.Notifiers {
+			switch n.Type {
+			case "webhook":
+				notifiers[n.Name] = notify.NewWebhook(n.URL)
+			case "slack":
+				notifiers[n.Name] = notify.NewSlack(n.URL)
+			}
+		}
+		rules := make([]alert.Rule, 0, len(cfg.Alerting.Rules))
+		for _, rc := range cfg.Alerting.Rules {
+			rule, err := alert.NewRule(rc)
+			if err != nil {
+				return fmt.Errorf("alerting.rules: %w", err)
+			}
+			rules = append(rules, rule)
+		}
+		alertEngine = alert.New(rules, notifiers, logger)
+	}
+
+	consumers := []ingest.Consumer{store}
+	if alertEngine != nil {
+		consumers = append(consumers, alertEngine)
+	}
+	pipeline := ingest.New(consumers...)
+
 	handleSample := func(s ingest.Sample) {
+		if detector != nil {
+			key := storage.SeriesKey{Name: s.Name, Labels: s.Labels}
+			s.Anomalous = detector.Score(key, s.Value)
+		}
 		if errs := pipeline.Ingest(s); len(errs) > 0 {
 			for _, e := range errs {
 				logger.Warn("ingest consumer failed", "metric", s.Name, "error", e)
@@ -93,8 +151,9 @@ func run(configPath string, logger *slog.Logger) error {
 	defer stop()
 
 	go scraper.Run(ctx)
-
-	engine := query.New(store)
+	if detector != nil {
+		go detector.Run(ctx)
+	}
 
 	// Push receive/send are both feature-flagged off by default (DESIGN/04
 	// §4.4) — pull scraping remains the zero-config path.
@@ -112,13 +171,15 @@ func run(configPath string, logger *slog.Logger) error {
 		Handler: httpapi.NewRouter(engine, httpapi.Options{
 			Config:        cfg,
 			WriteReceiver: writeReceiver,
+			AlertEngine:   alertEngine,
 		}),
 	}
 
 	serveErr := make(chan error, 1)
 	go func() {
 		logger.Info("circa listening", "address", cfg.Server.ListenAddress, "targets", len(targets),
-			"auth", len(cfg.Auth.Users) > 0, "push_receive", cfg.Features.PushReceive, "push_send", cfg.Features.PushSend)
+			"auth", len(cfg.Auth.Users) > 0, "push_receive", cfg.Features.PushReceive, "push_send", cfg.Features.PushSend,
+			"alerts", cfg.Features.Alerts, "ml", cfg.Features.ML)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serveErr <- err
 		}

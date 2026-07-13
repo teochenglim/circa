@@ -11,6 +11,7 @@ The full design has been split into `DESIGN/` so each concern is easy to find an
 7. [DESIGN/07_design_backup.md](DESIGN/07_design_backup.md) — CDC-style export into an Iceberg lake, push/pull, federation
 8. [DESIGN/08_design_config_auth_ops.md](DESIGN/08_design_config_auth_ops.md) — single-YAML config, feature flags, auth, operability
 9. [DESIGN/09_design_tech_stack_and_roadmap.md](DESIGN/09_design_tech_stack_and_roadmap.md) — tech stack, milestones, open questions
+10. [DESIGN/10_ml_summary.md](DESIGN/10_ml_summary.md) — Netdata's real ML implementation (read from source, not secondhand) mapped against what circa v0.4.0 actually replicates
 
 Related docs:
 - [README.md](README.md) — how to run it

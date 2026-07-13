@@ -41,7 +41,7 @@ func TestCompressionRatioAgainstRawBaseline(t *testing.T) {
 		for i := 0; i < numPoints; i++ {
 			value = sr.value(i, value)
 			ts := base.Add(time.Duration(i) * interval)
-			if err := s.Append(sr.key, interval, ts, value); err != nil {
+			if err := s.Append(sr.key, interval, ts, value, false); err != nil {
 				t.Fatalf("Append: %v", err)
 			}
 			totalPoints++

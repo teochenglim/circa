@@ -83,3 +83,54 @@ main {
 .u-legend {
   font-size: 0.8rem;
 }
+
+.panels {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
+}
+
+.panel {
+  flex: 1 1 320px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+
+.panel h2 {
+  font-size: 0.95rem;
+  margin: 0 0 0.5rem;
+}
+
+.panel table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.panel th,
+.panel td {
+  padding: 0.3rem 0.4rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.severity-critical {
+  color: #c53030;
+  font-weight: 600;
+}
+
+.severity-warning {
+  color: #b7791f;
+  font-weight: 600;
+}
+
+.severity-info {
+  color: #2b6cb0;
+}

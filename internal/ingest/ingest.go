@@ -15,6 +15,14 @@ type Sample struct {
 	Time     time.Time
 	Value    float64
 	Interval time.Duration // source's collection interval, used to size storage's ring buffer
+
+	// Anomalous is set by the caller (cmd/circa, when features.ml is on)
+	// before Ingest is called — internal/anomaly.Detector.Score runs ahead
+	// of the pipeline, not as a fanned-out Consumer, so the bit is already
+	// known by the time internal/storage embeds it into the stored value
+	// and internal/alert can key an "anomaly" condition off it. See
+	// DESIGN/06 §6.2 and RELEASE/v0.4.0.md for why.
+	Anomalous bool
 }
 
 // Consumer receives every sample ingested, regardless of source.

@@ -181,13 +181,98 @@
     loadAndRender();
   }
 
+  var alertsBody = document.getElementById("alerts-body");
+  var anomaliesBody = document.getElementById("anomalies-body");
+
+  function escapeHTML(s) {
+    var div = document.createElement("div");
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  // loadAlerts populates the Alerts panel from GET /api/v1/alerts — always
+  // present (empty when features.alerts is off), so this doesn't need to
+  // know whether alerting is even enabled.
+  function loadAlerts() {
+    fetch("/api/v1/alerts")
+      .then(function (r) { return r.json(); })
+      .then(function (body) {
+        var alerts = (body.data || []);
+        if (alerts.length === 0) {
+          alertsBody.innerHTML = '<p class="panel-empty">No alerts firing.</p>';
+          return;
+        }
+        var rows = alerts.map(function (a) {
+          return "<tr>" +
+            '<td class="severity-' + escapeHTML(a.severity) + '">' + escapeHTML(a.severity) + "</td>" +
+            "<td>" + escapeHTML(a.rule) + "</td>" +
+            "<td>" + escapeHTML(a.metric) + labelSuffix(a.labels) + "</td>" +
+            "<td>" + escapeHTML(String(a.value)) + "</td>" +
+            "<td>" + new Date(a.since).toLocaleTimeString() + "</td>" +
+            "</tr>";
+        }).join("");
+        alertsBody.innerHTML =
+          "<table><thead><tr><th>Severity</th><th>Rule</th><th>Metric</th><th>Value</th><th>Since</th></tr></thead>" +
+          "<tbody>" + rows + "</tbody></table>";
+      })
+      .catch(function () {
+        alertsBody.innerHTML = '<p class="panel-empty">Failed to load alerts.</p>';
+      });
+  }
+
+  // loadAnomalies populates the "what's unusual" panel from
+  // GET /api/v1/anomalies — the ranked list DESIGN/06 §6.2 calls for.
+  // Always present (empty when features.ml is off or nothing's anomalous).
+  function loadAnomalies() {
+    fetch("/api/v1/anomalies?window=600")
+      .then(function (r) { return r.json(); })
+      .then(function (body) {
+        var ranks = (body.data || []);
+        if (ranks.length === 0) {
+          anomaliesBody.innerHTML = '<p class="panel-empty">Nothing unusual right now.</p>';
+          return;
+        }
+        var rows = ranks.map(function (r) {
+          return "<tr>" +
+            "<td>" + escapeHTML(r.Metric.__name__ || "") + labelSuffix(r.Metric) + "</td>" +
+            "<td>" + (r.Rate * 100).toFixed(0) + "%</td>" +
+            "<td>" + r.Count + "</td>" +
+            "</tr>";
+        }).join("");
+        anomaliesBody.innerHTML =
+          "<table><thead><tr><th>Metric</th><th>Anomaly rate</th><th>Points</th></tr></thead>" +
+          "<tbody>" + rows + "</tbody></table>";
+      })
+      .catch(function () {
+        anomaliesBody.innerHTML = '<p class="panel-empty">Failed to load anomalies.</p>';
+      });
+  }
+
+  function labelSuffix(labels) {
+    var parts = [];
+    for (var k in labels) {
+      if (k !== "__name__" && Object.prototype.hasOwnProperty.call(labels, k)) {
+        parts.push(escapeHTML(k) + "=" + escapeHTML(labels[k]));
+      }
+    }
+    return parts.length ? " {" + parts.join(",") + "}" : "";
+  }
+
+  function refreshPanels() {
+    loadAlerts();
+    loadAnomalies();
+  }
+
   function scheduleRefresh() {
     if (refreshTimer) {
       clearInterval(refreshTimer);
       refreshTimer = null;
     }
     if (autoRefresh.checked) {
-      refreshTimer = setInterval(loadAndRender, 15000);
+      refreshTimer = setInterval(function () {
+        loadAndRender();
+        refreshPanels();
+      }, 15000);
     }
   }
 
@@ -197,5 +282,6 @@
   window.addEventListener("resize", loadAndRender);
 
   loadMetrics();
+  refreshPanels();
   scheduleRefresh();
 })();

@@ -35,9 +35,41 @@ storage:
     minute: 7d
     hour: 365d
 
-alerting:            # only read if features.alerts is true
-  rules: []
-  notifiers: []
+alerting:            # only read if features.alerts is true - DESIGN/06 §6.1
+  rules:
+    - name: high_cpu                         # any unique name
+      metric: node_cpu_seconds_total          # metric name to match
+      labels: { mode: idle }                  # exact-match label filter; omit to match every series of this metric
+      condition:
+        type: threshold                       # threshold | rate_of_change | anomaly
+        operator: "<"                         # > < >= <= == !=  (threshold/rate_of_change only)
+        value: 10
+        # window: 5m                          # rate_of_change only - condition compares the per-second rate over this window
+      for: 5m                                 # must hold continuously this long before firing (Prometheus-style hysteresis)
+      severity: warning                       # info | warning | critical
+      notify: [ops-webhook]                   # notifier names below; omit/empty = every configured notifier
+    - name: unusual_latency
+      metric: http_request_duration_seconds
+      condition: { type: anomaly }            # fires when features.ml's anomaly bit is set - see the anomaly: section below
+      severity: critical
+      notify: [ops-webhook, ops-slack]
+  notifiers:
+    - name: ops-webhook
+      type: webhook                           # webhook | slack
+      url: https://example.internal/circa-alerts
+    - name: ops-slack
+      type: slack
+      url: https://hooks.slack.com/services/T000/B000/xxxxxxxxxxxxxxxxxxxxxxxx
+
+anomaly:              # only read if features.ml is true - DESIGN/06 §6.2,
+                      # DESIGN/10_ml_summary.md (defaults mirror Netdata's own ml_config.cc)
+  model_count: 18            # ensemble size per metric
+  training_window: 6h        # history each new model trains on
+  retrain_interval: 3h       # how often a new model joins the ensemble
+  diff_n: 1                  # order of differencing (0 or 1)
+  smooth_n: 3                # rolling-average window after differencing
+  lag_n: 5                   # lagged values per feature vector
+  score_threshold: 99        # 0..100 - anomaly score cutoff
 
 backup:               # only read if features.backup is true
   mode: pull           # push | pull

@@ -77,6 +77,17 @@ circa auth hash-password                               # just prints a bcrypt ha
 
 Every user in `auth.users` gets full access — this is authentication, not per-user authorization (see [DESIGN/08](DESIGN/08_design_config_auth_ops.md) §8.2.1). `GET /healthz`/`/readyz` stay open even with auth on, for liveness/readiness probes; everything else, including the dashboard and `GET /status` (the effective config, secrets redacted), requires it once any user exists.
 
+### Alerting & anomaly detection
+
+Both are feature-flagged off by default. Turn on `features.alerts` and add rules/notifiers under `alerting:` (see [config.example.yaml](config.example.yaml) for a worked example — threshold, rate-of-change, and anomaly-bit conditions, webhook and Slack notifiers). Turn on `features.ml` and tune `anomaly:` if you want something other than the defaults, which mirror [Netdata's own](DESIGN/10_ml_summary.md) (an 18-model k-means ensemble per metric, retrained every 3h on a 6h window).
+
+```bash
+circa config check config.yaml   # catches a rule referencing an unknown notifier, an
+                                  # anomaly condition with features.ml off, bad bounds, etc.
+```
+
+The dashboard shows a live Alerts panel and a "what's unusual right now" ranked panel; both are also available as JSON via `GET /api/v1/alerts` and `GET /api/v1/anomalies?window=<seconds>` (default window: 10 minutes).
+
 ## Development
 
 ```bash
@@ -94,8 +105,8 @@ make build           # binary in ./bin
 - Fixed-size round-robin storage (RRD-style tiers) with Gorilla-style delta+XOR compression — constant disk footprint regardless of how long Circa runs.
 - Embedded static dashboard (uPlot charts, `go:embed`) — no Node.js, no separate frontend deploy.
 - Prometheus remote-write push **and** pull ingestion, both feature-flagged off by default.
-- Rule-based alerting with pluggable notifiers (webhook, Slack, email, PagerDuty-compatible).
-- Per-metric k-means anomaly detection, anomaly bit embedded in storage (no extra time series).
+- Rule-based alerting (threshold, rate-of-change, anomaly-bit conditions) with pluggable notifiers — webhook and Slack today, more channels are a small addition behind the same interface.
+- Per-metric k-means anomaly detection matched against Netdata's real implementation (not just its design docs — see [DESIGN/10](DESIGN/10_ml_summary.md)), anomaly bit embedded in storage (no extra time series).
 - Watermark-driven CDC export into an Iceberg lake, push or pull mode, so cross-node "federation" is just a SQL query against a shared table.
 
 ## Security scanning

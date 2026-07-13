@@ -14,7 +14,12 @@ repos:
 
       - id: trivy-fs
         name: Trivy filesystem scan (Go module CVEs, fails on CRITICAL/HIGH)
-        entry: trivy fs --scanners vuln --severity CRITICAL,HIGH --exit-code 1 .
+        # --skip-dirs netdata: a gitignored, non-shipped local reference
+        # clone (kept for reading real ML source, see DESIGN/10) sometimes
+        # sits next to this repo. It's not part of any commit, but `trivy
+        # fs .` scans the whole tree regardless of .gitignore, so its own
+        # (upstream, unrelated) go.mod would otherwise fail this hook.
+        entry: trivy fs --scanners vuln --severity CRITICAL,HIGH --skip-dirs netdata --exit-code 1 .
         language: system
         files: ^go\.(mod|sum)$
         pass_filenames: false

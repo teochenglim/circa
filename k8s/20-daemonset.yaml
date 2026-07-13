@@ -24,7 +24,7 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: circa
-          image: "ghcr.io/teochenglim/circa:0.3.0"
+          image: "ghcr.io/teochenglim/circa:0.4.0"
           args: ["-config", "/etc/circa/config.yaml"]
           ports:
             - containerPort: 9100

@@ -132,6 +132,169 @@ ingest:
 	}
 }
 
+func TestLoadDefaultsAnomalyToNetdataDefaults(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Anomaly.ModelCount != 18 {
+		t.Errorf("ModelCount = %d, want 18", cfg.Anomaly.ModelCount)
+	}
+	if cfg.Anomaly.DiffN != 1 || cfg.Anomaly.SmoothN != 3 || cfg.Anomaly.LagN != 5 {
+		t.Errorf("DiffN/SmoothN/LagN = %d/%d/%d, want 1/3/5", cfg.Anomaly.DiffN, cfg.Anomaly.SmoothN, cfg.Anomaly.LagN)
+	}
+	if cfg.Anomaly.ScoreThreshold != 99.0 {
+		t.Errorf("ScoreThreshold = %v, want 99.0", cfg.Anomaly.ScoreThreshold)
+	}
+}
+
+func TestLoadRejectsAnomalyMisconfigWhenMLEnabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `
+features:
+  ml: true
+anomaly:
+  model_count: 0
+  diff_n: 5
+  lag_n: 0
+  score_threshold: 500
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for invalid anomaly config, got nil")
+	}
+}
+
+func TestLoadAllowsExplicitDiffZero(t *testing.T) {
+	// diff_n: 0 is a valid, meaningful value (disables differencing) and
+	// must not be silently overridden back to the default of 1.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `
+features:
+  ml: true
+anomaly:
+  diff_n: 0
+  lag_n: 3
+  model_count: 2
+  training_window: 1h
+  retrain_interval: 1h
+  score_threshold: 99
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Anomaly.DiffN != 0 {
+		t.Errorf("DiffN = %d, want 0 (explicit value must survive)", cfg.Anomaly.DiffN)
+	}
+}
+
+func TestLoadRejectsAlertRuleUnknownNotifier(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `
+features:
+  alerts: true
+alerting:
+  rules:
+    - name: high_cpu
+      metric: cpu
+      condition: { type: threshold, operator: ">", value: 90 }
+      severity: warning
+      notify: [nonexistent]
+  notifiers: []
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for rule referencing an unknown notifier, got nil")
+	}
+}
+
+func TestLoadRejectsAlertRuleBadConditionType(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `
+features:
+  alerts: true
+alerting:
+  rules:
+    - name: r
+      metric: m
+      condition: { type: bogus }
+  notifiers: []
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for unknown condition type, got nil")
+	}
+}
+
+func TestLoadRejectsAnomalyConditionWhenMLDisabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `
+features:
+  alerts: true
+alerting:
+  rules:
+    - name: r
+      metric: m
+      condition: { type: anomaly }
+  notifiers: []
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for anomaly condition with features.ml false, got nil")
+	}
+}
+
+func TestLoadAcceptsValidAlertingConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `
+features:
+  alerts: true
+alerting:
+  rules:
+    - name: high_cpu
+      metric: cpu
+      labels: { host: a }
+      condition: { type: threshold, operator: ">", value: 90 }
+      for: 5m
+      severity: critical
+      notify: [ops]
+  notifiers:
+    - name: ops
+      type: webhook
+      url: https://example.internal/hook
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Alerting.Rules) != 1 || cfg.Alerting.Rules[0].Name != "high_cpu" {
+		t.Errorf("Rules = %+v", cfg.Alerting.Rules)
+	}
+}
+
+func TestRedactedMasksAuthAndNotifierSecrets(t *testing.T) {
+	cfg := Config{
+		Auth: Auth{Users: map[string]string{"admin": "$2a$10$realhashvalue"}},
+		Alerting: Alerting{
+			Notifiers: []NotifierConfig{{Name: "slack", Type: "slack", URL: "https://hooks.slack.com/services/T000/B000/xxxxTOKEN"}},
+		},
+	}
+	redacted := cfg.Redacted()
+	if redacted.Auth.Users["admin"] != "[redacted]" {
+		t.Errorf("Auth.Users[admin] = %q, want [redacted]", redacted.Auth.Users["admin"])
+	}
+	if redacted.Alerting.Notifiers[0].URL != "[redacted]" {
+		t.Errorf("Notifiers[0].URL = %q, want [redacted]", redacted.Alerting.Notifiers[0].URL)
+	}
+	// Original must be untouched.
+	if cfg.Alerting.Notifiers[0].URL == "[redacted]" {
+		t.Error("Redacted mutated the original Config")
+	}
+}
+
 func writeFile(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {

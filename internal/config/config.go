@@ -1,9 +1,9 @@
 // Package config loads circa's single YAML config file.
 //
-// server, ingest.scrape, storage, push, and auth are read and acted on as of
-// v0.3.0. alerting and backup are decoded into Config (so `circa config
-// check` has something to validate) but not yet acted on — those land in
-// v0.4.0/v0.5.0.
+// server, ingest.scrape, storage, push, auth, alerting, and anomaly are read
+// and acted on as of v0.4.0. backup is decoded into Config (so `circa config
+// check` has something to validate) but not yet acted on — that lands in
+// v0.5.0.
 package config
 
 import (
@@ -68,6 +68,7 @@ type Config struct {
 	Ingest   Ingest   `yaml:"ingest"`
 	Storage  Storage  `yaml:"storage"`
 	Alerting Alerting `yaml:"alerting"`
+	Anomaly  Anomaly  `yaml:"anomaly"`
 	Backup   Backup   `yaml:"backup"`
 	Push     Push     `yaml:"push"`
 	Auth     Auth     `yaml:"auth"`
@@ -122,13 +123,65 @@ type Retention struct {
 	Hour   Duration `yaml:"hour"`
 }
 
-// Alerting is decoded so `circa config check` has a schema to validate
-// against, but the rule engine itself is v0.4.0 — nothing reads Rules or
-// Notifiers yet. Kept loosely typed (yaml.Node) since that schema hasn't
-// been designed yet; see DESIGN/06.
+// Alerting is read and acted on as of v0.4.0 (DESIGN/06 §6.1) when
+// features.alerts is true.
 type Alerting struct {
-	Rules     []yaml.Node `yaml:"rules"`
-	Notifiers []yaml.Node `yaml:"notifiers"`
+	Rules     []AlertRule      `yaml:"rules"`
+	Notifiers []NotifierConfig `yaml:"notifiers"`
+}
+
+// AlertRule is one rule: a metric selector (Metric + Labels, exact-match —
+// same convention as the query API) plus a Condition, a hysteresis window
+// (For), and a Severity. For is duration-based (Prometheus's own `for:`
+// convention — "condition must hold continuously for at least this long
+// before firing"), not the "N evaluations" phrasing in DESIGN/06 §6.1:
+// evaluation cadence varies per scrape target's interval, so a wall-clock
+// duration is the more portable knob, and it's a convention Prometheus users
+// already know.
+type AlertRule struct {
+	Name      string            `yaml:"name"`
+	Metric    string            `yaml:"metric"`
+	Labels    map[string]string `yaml:"labels"`
+	Condition ConditionConfig   `yaml:"condition"`
+	For       Duration          `yaml:"for"`
+	Severity  string            `yaml:"severity"` // info | warning | critical
+	Notify    []string          `yaml:"notify"`   // notifier names to dispatch to; empty = every configured notifier
+}
+
+// ConditionConfig is one rule's trigger condition — threshold and
+// rate_of_change compare Value against the sample (rate_of_change compares
+// against the per-second rate of change over Window); anomaly fires when the
+// storage-embedded anomaly bit (§6.2) is set and ignores Operator/Value/Window.
+type ConditionConfig struct {
+	Type     string   `yaml:"type"` // threshold | rate_of_change | anomaly
+	Operator string   `yaml:"operator"`
+	Value    float64  `yaml:"value"`
+	Window   Duration `yaml:"window"` // rate_of_change only
+}
+
+// NotifierConfig is one configured notification channel (DESIGN/06 §6.1:
+// "pluggable interface, start with generic webhook + Slack").
+type NotifierConfig struct {
+	Name string `yaml:"name"`
+	Type string `yaml:"type"` // webhook | slack
+	URL  string `yaml:"url"`
+}
+
+// Anomaly configures the k-means ensemble (DESIGN/06 §6.2), read only when
+// features.ml is true. It lives in its own top-level section (not nested
+// under features.ml, which stays a bool) to mirror alerting/backup/push's
+// "flag toggles the feature, its own section holds the knobs" shape. Field
+// names and defaults deliberately mirror Netdata's own ml_config.cc — see
+// DESIGN/10_ml_summary.md §4 for the full mapping; this isn't a from-scratch
+// design, it's matched against the real implementation.
+type Anomaly struct {
+	ModelCount      int      `yaml:"model_count"`      // ensemble size per metric (Netdata default: 18)
+	TrainingWindow  Duration `yaml:"training_window"`  // history each new model trains on
+	RetrainInterval Duration `yaml:"retrain_interval"` // how often a new model is trained and added to the ensemble
+	DiffN           int      `yaml:"diff_n"`           // order of differencing (0 or 1) applied before smoothing
+	SmoothN         int      `yaml:"smooth_n"`         // rolling-average window applied after differencing
+	LagN            int      `yaml:"lag_n"`            // lagged values included per feature vector
+	ScoreThreshold  float64  `yaml:"score_threshold"`  // 0..100 - min-max-normalized distance at/above which a point counts as anomalous
 }
 
 // Backup is decoded so `circa config check` can validate it (per DESIGN/08
@@ -174,6 +227,20 @@ const (
 	DefaultInfluxPath      = "/write"
 )
 
+// Anomaly defaults — mirror Netdata's own ml_config.cc defaults exactly
+// (see DESIGN/10_ml_summary.md §4), not just DESIGN/06 §6.2's paraphrase of
+// them: 18 models per dimension, retrained every 3h on a 6h window,
+// diff/smooth/lag of 1/3/5, threshold 99 (of 100).
+const (
+	DefaultModelCount      = 18
+	DefaultTrainingWindow  = 6 * time.Hour
+	DefaultRetrainInterval = 3 * time.Hour
+	DefaultDiffN           = 1
+	DefaultSmoothN         = 3
+	DefaultLagN            = 5
+	DefaultScoreThreshold  = 99.0
+)
+
 // Default returns the config used when no file is given, or when a field is
 // left unset in the file — a fresh install with an empty target list should
 // still start up and serve an empty dashboard, per DESIGN/04 §4.2.
@@ -192,6 +259,15 @@ func Default() Config {
 		Push: Push{
 			Receive: PushReceive{Path: DefaultPushReceivePath},
 			Send:    PushSend{Interval: Duration(30 * time.Second)},
+		},
+		Anomaly: Anomaly{
+			ModelCount:      DefaultModelCount,
+			TrainingWindow:  Duration(DefaultTrainingWindow),
+			RetrainInterval: Duration(DefaultRetrainInterval),
+			DiffN:           DefaultDiffN,
+			SmoothN:         DefaultSmoothN,
+			LagN:            DefaultLagN,
+			ScoreThreshold:  DefaultScoreThreshold,
 		},
 	}
 }
@@ -248,6 +324,26 @@ func (cfg *Config) applyDefaults() {
 	if cfg.Push.Send.Interval == 0 {
 		cfg.Push.Send.Interval = Duration(30 * time.Second)
 	}
+	if cfg.Anomaly.ModelCount == 0 {
+		cfg.Anomaly.ModelCount = DefaultModelCount
+	}
+	if cfg.Anomaly.TrainingWindow == 0 {
+		cfg.Anomaly.TrainingWindow = Duration(DefaultTrainingWindow)
+	}
+	if cfg.Anomaly.RetrainInterval == 0 {
+		cfg.Anomaly.RetrainInterval = Duration(DefaultRetrainInterval)
+	}
+	if cfg.Anomaly.LagN == 0 {
+		cfg.Anomaly.LagN = DefaultLagN
+	}
+	if cfg.Anomaly.ScoreThreshold == 0 {
+		cfg.Anomaly.ScoreThreshold = DefaultScoreThreshold
+	}
+	// DiffN and SmoothN are deliberately not defaulted here: 0 is a valid,
+	// meaningful value for both (matching Netdata's own semantics — diff_n:
+	// 0 disables differencing, smooth_n: 0 disables smoothing), unlike a
+	// duration or count of 0, which is never meaningful and safe to treat as
+	// "unset." Only Default() (no config file at all) sets them to 1/3.
 }
 
 // Validate runs schema-adjacent, cross-field sanity checks — the same checks
@@ -309,6 +405,113 @@ func (cfg Config) Validate() []error {
 		}
 	}
 
+	if cfg.Features.Alerts {
+		errs = append(errs, cfg.validateAlerting()...)
+	}
+	if cfg.Features.ML {
+		errs = append(errs, cfg.validateAnomaly()...)
+	}
+
+	return errs
+}
+
+var validOperators = map[string]bool{">": true, "<": true, ">=": true, "<=": true, "==": true, "!=": true}
+var validSeverities = map[string]bool{"": true, "info": true, "warning": true, "critical": true}
+
+func (cfg Config) validateAlerting() []error {
+	var errs []error
+
+	notifierNames := make(map[string]bool, len(cfg.Alerting.Notifiers))
+	for i, n := range cfg.Alerting.Notifiers {
+		if n.Name == "" {
+			errs = append(errs, fmt.Errorf("alerting.notifiers[%d]: name is required", i))
+		} else if notifierNames[n.Name] {
+			errs = append(errs, fmt.Errorf("alerting.notifiers[%d]: duplicate name %q", i, n.Name))
+		}
+		notifierNames[n.Name] = true
+
+		switch n.Type {
+		case "webhook", "slack":
+		default:
+			errs = append(errs, fmt.Errorf("alerting.notifiers[%d] (%s): type %q is invalid (want \"webhook\" or \"slack\")", i, n.Name, n.Type))
+		}
+		if n.URL == "" {
+			errs = append(errs, fmt.Errorf("alerting.notifiers[%d] (%s): url is required", i, n.Name))
+		}
+	}
+
+	for i, r := range cfg.Alerting.Rules {
+		if r.Name == "" {
+			errs = append(errs, fmt.Errorf("alerting.rules[%d]: name is required", i))
+		}
+		if r.Metric == "" {
+			errs = append(errs, fmt.Errorf("alerting.rules[%d] (%s): metric is required", i, r.Name))
+		}
+		if r.For < 0 {
+			errs = append(errs, fmt.Errorf("alerting.rules[%d] (%s): for must not be negative", i, r.Name))
+		}
+		if !validSeverities[r.Severity] {
+			errs = append(errs, fmt.Errorf("alerting.rules[%d] (%s): severity %q is invalid (want \"info\", \"warning\", or \"critical\")", i, r.Name, r.Severity))
+		}
+
+		switch r.Condition.Type {
+		case "threshold":
+			if !validOperators[r.Condition.Operator] {
+				errs = append(errs, fmt.Errorf("alerting.rules[%d] (%s): condition.operator %q is invalid", i, r.Name, r.Condition.Operator))
+			}
+		case "rate_of_change":
+			if !validOperators[r.Condition.Operator] {
+				errs = append(errs, fmt.Errorf("alerting.rules[%d] (%s): condition.operator %q is invalid", i, r.Name, r.Condition.Operator))
+			}
+			if r.Condition.Window <= 0 {
+				errs = append(errs, fmt.Errorf("alerting.rules[%d] (%s): condition.window must be positive for rate_of_change", i, r.Name))
+			}
+		case "anomaly":
+			// operator/value/window unused - nothing further to validate
+		default:
+			errs = append(errs, fmt.Errorf("alerting.rules[%d] (%s): condition.type %q is invalid (want \"threshold\", \"rate_of_change\", or \"anomaly\")", i, r.Name, r.Condition.Type))
+		}
+		if r.Condition.Type == "anomaly" && !cfg.Features.ML {
+			errs = append(errs, fmt.Errorf("alerting.rules[%d] (%s): condition.type is \"anomaly\" but features.ml is false — the anomaly bit is never set", i, r.Name))
+		}
+
+		for _, name := range r.Notify {
+			if !notifierNames[name] {
+				errs = append(errs, fmt.Errorf("alerting.rules[%d] (%s): notify references unknown notifier %q", i, r.Name, name))
+			}
+		}
+	}
+
+	return errs
+}
+
+// validateAnomaly's bounds mirror ml_config.cc's own clamp ranges (see
+// DESIGN/10_ml_summary.md §4) rather than arbitrary limits — e.g. diff_n and
+// lag_n's ranges match what Netdata's k-means feature pipeline itself
+// requires to produce a sane feature vector.
+func (cfg Config) validateAnomaly() []error {
+	var errs []error
+	if cfg.Anomaly.ModelCount < 1 {
+		errs = append(errs, errors.New("features.ml is true but anomaly.model_count must be at least 1"))
+	}
+	if cfg.Anomaly.TrainingWindow <= 0 {
+		errs = append(errs, errors.New("features.ml is true but anomaly.training_window must be positive"))
+	}
+	if cfg.Anomaly.RetrainInterval <= 0 {
+		errs = append(errs, errors.New("features.ml is true but anomaly.retrain_interval must be positive"))
+	}
+	if cfg.Anomaly.DiffN < 0 || cfg.Anomaly.DiffN > 1 {
+		errs = append(errs, errors.New("features.ml is true but anomaly.diff_n must be 0 or 1"))
+	}
+	if cfg.Anomaly.SmoothN < 0 {
+		errs = append(errs, errors.New("features.ml is true but anomaly.smooth_n must not be negative"))
+	}
+	if cfg.Anomaly.LagN < 1 {
+		errs = append(errs, errors.New("features.ml is true but anomaly.lag_n must be at least 1"))
+	}
+	if cfg.Anomaly.ScoreThreshold <= 0 || cfg.Anomaly.ScoreThreshold > 100 {
+		errs = append(errs, errors.New("features.ml is true but anomaly.score_threshold must be in (0,100]"))
+	}
 	return errs
 }
 
@@ -329,8 +532,10 @@ func Check(path string) error {
 }
 
 // Redacted returns a copy of cfg safe to display externally — bcrypt hashes
-// are masked, matching DESIGN/08 §8.3's "/status renders the effective
-// config with secrets redacted." Used by httpapi's GET /status.
+// and notifier webhook URLs (which routinely embed a bearer token, e.g.
+// Slack's incoming-webhook path) are masked, matching DESIGN/08 §8.3's
+// "/status renders the effective config with secrets redacted." Used by
+// httpapi's GET /status.
 func (cfg Config) Redacted() Config {
 	redacted := cfg
 	if len(cfg.Auth.Users) > 0 {
@@ -339,6 +544,14 @@ func (cfg Config) Redacted() Config {
 			users[user] = "[redacted]"
 		}
 		redacted.Auth.Users = users
+	}
+	if len(cfg.Alerting.Notifiers) > 0 {
+		notifiers := make([]NotifierConfig, len(cfg.Alerting.Notifiers))
+		for i, n := range cfg.Alerting.Notifiers {
+			n.URL = "[redacted]"
+			notifiers[i] = n
+		}
+		redacted.Alerting.Notifiers = notifiers
 	}
 	return redacted
 }

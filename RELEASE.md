@@ -1,6 +1,6 @@
 # Release History
 
-`cmd/circa` landed with v0.1.0, UI + compression with v0.2.0, config/auth/push ingestion with v0.3.0 — see [ARCHITECTURE.md](ARCHITECTURE.md) for the as-built layout. The table below tracks the *planned* release scope per [DESIGN/09](DESIGN/09_design_tech_stack_and_roadmap.md) §9.2's milestone list, so progress becomes traceable as each one is actually built.
+`cmd/circa` landed with v0.1.0, UI + compression with v0.2.0, config/auth/push ingestion with v0.3.0, alerting + anomaly detection with v0.4.0 — see [ARCHITECTURE.md](ARCHITECTURE.md) for the as-built layout. The table below tracks the *planned* release scope per [DESIGN/09](DESIGN/09_design_tech_stack_and_roadmap.md) §9.2's milestone list, so progress becomes traceable as each one is actually built.
 
 Newest first.
 
@@ -8,7 +8,7 @@ Newest first.
 | :--- | :--- | :--- |
 | [v1.0.0](RELEASE/v1.0.0.md) | Hardening, sizing calculator, packaging, docs | Not started |
 | [v0.5.0](RELEASE/v0.5.0.md) | Federation & self-expose (backup CDC to Iceberg, federation search, `/metrics`) | Not started |
-| [v0.4.0](RELEASE/v0.4.0.md) | Intelligence (alerting, anomaly detection) | Not started |
+| [v0.4.0](RELEASE/v0.4.0.md) | Intelligence (alerting, anomaly detection) | **Shipped** |
 | [v0.3.0](RELEASE/v0.3.0.md) | Operability (config & CLI, auth, push/pull remote-write ingestion) | **Shipped** |
 | [v0.2.0](RELEASE/v0.2.0.md) | Visibility (UI, compression) | **Shipped** |
 | [v0.1.0](RELEASE/v0.1.0.md) | Core (scrape ingestion + storage + `/api/v1/query_range`) | **Shipped** |

@@ -29,25 +29,26 @@ targets, always on) /write, flagged)  both flagged)
    ┌──────────────┼──────────────┬──────────────┐
 internal/          internal/     internal/      internal/
 storage            alert         anomaly        backup
-[BUILT: tier-0/     [planned,     [planned,      [planned,
+[BUILT: tier-0/     [BUILT:       [BUILT:        [planned,
 1/2, Gorilla        v0.4.0]       v0.4.0]        v0.5.0]
-compression]
+compression,
+anomaly bit]
 (RRD tiers,        (rule engine, (k-means        (CDC export
 Gorilla             notifiers,   ensemble,       to Iceberg,
 compression,        feature-     anomaly bit     watermark-
-mmap files)         flagged)     embedded in     driven,
-                                 storage,        feature-
+LSB anomaly         flagged)     embedded in     driven,
+bit trick)                       storage,        feature-
                                  feature-        flagged)
                                  flagged)
                   │
-internal/config             — [BUILT: v0.3.0] single YAML file, full schema + cross-field Validate(); `circa config init`/`check` (cmd/circa/config_cli.go)
+internal/config             — [BUILT: v0.4.0] single YAML file, full schema + cross-field Validate() incl. alerting/anomaly; `circa config init`/`check` (cmd/circa/config_cli.go)
 internal/auth                — [BUILT: v0.3.0] optional multi-user bcrypt basic auth, no-auth default; `circa auth add-user`/`reset-password` (cmd/circa/auth_cli.go)
-web/                           — [BUILT] static HTML/CSS/JS (uPlot-based dashboard), embedded via go:embed
+web/                           — [BUILT] static HTML/CSS/JS (uPlot-based dashboard, Alerts + "what's unusual" panels), embedded via go:embed
 ```
 
-`internal/storage`'s compression is a from-scratch Gorilla-style bit-packer (`gorilla.go`/`bitstream.go`), not mmap — see [RELEASE/v0.2.0.md](RELEASE/v0.2.0.md) for why mmap was skipped and the actual compression ratio measured. Tier-1/tier-2 rollups (`tiered.go`) are stored as three ordinary series per real metric (`#min`/`#avg`/`#max`), reusing the tier-0 engine rather than a shared-timestamp triplet format — also a deliberate v0.2.0 simplification.
+`internal/storage`'s compression is a from-scratch Gorilla-style bit-packer (`gorilla.go`/`bitstream.go`), not mmap — see [RELEASE/v0.2.0.md](RELEASE/v0.2.0.md) for why mmap was skipped and the actual compression ratio measured. Tier-1/tier-2 rollups (`tiered.go`) are stored as three ordinary series per real metric (`#min`/`#avg`/`#max`), reusing the tier-0 engine rather than a shared-timestamp triplet format — also a deliberate v0.2.0 simplification. As of v0.4.0, `internal/storage` also carries the anomaly bit (`anomalybit.go`) — see [DESIGN/06](DESIGN/06_design_alerting_and_anomaly_detection.md) §6.2 and [DESIGN/10](DESIGN/10_ml_summary.md) before touching either.
 
-Every package in the consumer fan-out below `internal/ingest` (`alert`, `anomaly`, `backup`) is optional and gated by its own feature flag from `internal/config` — see [DESIGN/08](DESIGN/08_design_config_auth_ops.md) §8.1.3. On the source side, `internal/ingest/scrape` is the only always-on mechanism (an empty target list just means it does nothing); `influx` and `remotewrite` are themselves feature-flagged. `internal/storage` is the only always-on consumer; the baseline binary's footprint is scrape client + storage, nothing more.
+Every package in the consumer fan-out below `internal/ingest` (`alert`, `anomaly`, `backup`) is optional and gated by its own feature flag from `internal/config` — see [DESIGN/08](DESIGN/08_design_config_auth_ops.md) §8.1.3. On the source side, `internal/ingest/scrape` is the only always-on mechanism (an empty target list just means it does nothing); `influx` and `remotewrite` are themselves feature-flagged. `internal/storage` is the only always-on consumer; the baseline binary's footprint is scrape client + storage, nothing more. **`internal/anomaly` is not itself a fanned-out `ingest.Consumer`** despite the diagram's positioning — its `Detector.Score` runs in `cmd/circa`'s `handleSample` *before* `ingest.Pipeline.Ingest` is called, so the anomaly bit is already set on the `ingest.Sample` by the time `internal/storage` and `internal/alert` (which *is* a real `Consumer`) both see it. See "An ingestion event, end to end" below.
 
 ## Where things go
 
@@ -57,28 +58,29 @@ Every package in the consumer fan-out below `internal/ingest` (`alert`, `anomaly
 | InfluxDB line protocol receiver | Planned, not yet assigned to a milestone. `internal/ingest/influx/` — `/write` handler, measurement/field → series mapping, see [DESIGN/04](DESIGN/04_design_collection_and_ingestion.md) §4.3. `ingest.influx.path` config + validation already exist (`internal/config`); the handler itself doesn't |
 | Remote-write receive/send | **Built: v0.3.0.** `internal/ingest/remotewrite/` — `receiver.go` decodes protobuf+Snappy `POST <push.receive.path>` into the shared `ingest.Pipeline`; `sender.go` ticks on `push.send.interval`, batching every series' points since an in-memory (not persisted) watermark and pushing them onward. See [DESIGN/04](DESIGN/04_design_collection_and_ingestion.md) §4.4 |
 | RRD tier logic, compression, mmap layout | **Built: tier-0/1/2, Gorilla-compressed, no mmap** (from-scratch bit-packer, not `go-tsz` — see RELEASE/v0.2.0.md). `internal/storage/` — see [DESIGN/03](DESIGN/03_design_storage.md) before changing tier sizes or the on-disk format |
-| Query API (`/api/v1/query`, `/query_range`) | **Built: `query_range` + `series`**, exact-label-match (no PromQL yet), tier=raw/minute/hour. `internal/query/` — reads from `internal/storage`, no writes |
-| Alert rule evaluation + notifiers | Planned, v0.4.0. `internal/alert/` — new notifier channels go in `internal/alert/notify/<channel>.go` behind the existing dispatch interface, see [DESIGN/06](DESIGN/06_design_alerting_and_anomaly_detection.md) §6.1 |
-| Anomaly detection (k-means ensemble) | Planned, v0.4.0. `internal/anomaly/` — see [DESIGN/06](DESIGN/06_design_alerting_and_anomaly_detection.md) §6.2 before changing model count/window defaults |
+| Query API (`/api/v1/query`, `/query_range`) | **Built: `query_range` + `series` + `AnomalyRanking`**, exact-label-match (no PromQL yet), tier=raw/minute/hour. `internal/query/` — reads from `internal/storage`, no writes |
+| Alert rule evaluation + notifiers | **Built: v0.4.0.** `internal/alert/` — `Rule`/`Condition` (threshold/rate_of_change/anomaly), `Engine` (an `ingest.Consumer`). New notifier channels go in `internal/alert/notify/<channel>.go` behind the existing `Notifier` interface — see "Adding a new alert notifier" below and [DESIGN/06](DESIGN/06_design_alerting_and_anomaly_detection.md) §6.1 |
+| Anomaly detection (k-means ensemble) | **Built: v0.4.0**, matched against Netdata's real source, not just DESIGN/06 §6.2's summary — see [DESIGN/10](DESIGN/10_ml_summary.md) for the full mapping before changing model count/window/threshold defaults. `internal/anomaly/` (`model.go` — k-means + Netdata-matching preprocessing/scoring, `detector.go` — FIFO ensemble + staggered retraining). Wired into `cmd/circa` as a pre-ingest scoring step, not an `ingest.Consumer` — see the diagram note above |
 | Iceberg CDC export | Planned, v0.5.0. `internal/backup/` — watermark state, Arrow/Parquet batching, push+pull modes, see [DESIGN/07](DESIGN/07_design_backup.md) |
-| Config keys | **Built: v0.3.0, all sections.** `server`/`ingest.scrape`/`ingest.influx`/`storage`/`push`/`auth` are acted on; `alerting`/`backup` decode into `Config` (with cross-field `Validate()` checks) but aren't acted on yet — that's v0.4.0/v0.5.0. `internal/config/config.go` + `template.go` (the `circa config init` template), *and* [config.example.yaml](config.example.yaml) — that file is the user-facing reference, config.go alone isn't enough |
-| `circa config init`/`check`, `circa auth add-user`/`reset-password` | **Built: v0.3.0.** `cmd/circa/config_cli.go`, `cmd/circa/auth_cli.go` — see [DESIGN/08](DESIGN/08_design_config_auth_ops.md) §8.1.2 |
-| HTTP handlers + routes | **Built: `query_range`, `series`, `status`, `healthz`, `readyz`, dashboard (`/`, `/static/*`), write receiver (`POST push.receive.path`, when `features.push_receive` is on).** `internal/httpapi/` — `/healthz`/`/readyz` stay unauthenticated even when `auth.users` is set, everything else goes through `internal/auth.Middleware` |
-| Dashboard HTML/CSS/JS (no build step) | **Built.** `web/template/` for HTML templates, `web/static/{css,js}` for static assets (vendored uPlot v1.6.32), embed wiring in `web/embed.go` |
+| Config keys | **Built: v0.4.0, all sections except backup.** `server`/`ingest.scrape`/`ingest.influx`/`storage`/`push`/`auth`/`alerting`/`anomaly` are acted on; `backup` decodes into `Config` (with cross-field `Validate()` checks) but isn't acted on yet — that's v0.5.0. `internal/config/config.go` + `template.go` (the `circa config init` template), *and* [config.example.yaml](config.example.yaml) — that file is the user-facing reference, config.go alone isn't enough |
+| `circa config init`/`check`, `circa auth add-user`/`reset-password`/`hash-password` | **Built: v0.3.0.** `cmd/circa/config_cli.go`, `cmd/circa/auth_cli.go` — see [DESIGN/08](DESIGN/08_design_config_auth_ops.md) §8.1.2 |
+| HTTP handlers + routes | **Built: `query_range`, `series`, `alerts`, `anomalies`, `status`, `healthz`, `readyz`, dashboard (`/`, `/static/*`), write receiver (`POST push.receive.path`, when `features.push_receive` is on).** `internal/httpapi/` — `/healthz`/`/readyz` stay unauthenticated even when `auth.users` is set, everything else goes through `internal/auth.Middleware` |
+| Dashboard HTML/CSS/JS (no build step) | **Built,** incl. v0.4.0's Alerts + "what's unusual" panels. `web/template/` for HTML templates, `web/static/{css,js}` for static assets (vendored uPlot v1.6.32), embed wiring in `web/embed.go` |
 | Auth (basic auth, user store) | **Built: v0.3.0.** `internal/auth/` (`auth.go` — `Middleware`, bcrypt check; `userfile.go` — `SetUser`, edits `auth.users` into the YAML `yaml.Node` tree in place). See [DESIGN/08](DESIGN/08_design_config_auth_ops.md) §8.2 before adding anything beyond stateless basic auth |
 | Tests | unit: alongside the package (`_test.go`, white-box — see `internal/storage/storage_test.go` for the pattern); full-stack: an `internal/httpapi/integration_test.go` pattern once the HTTP layer grows beyond query_range/series (see servicedesk's `testEnv`/`client` pattern for the shape to copy) |
 
 ## An ingestion event, end to end
 
-Steps 1–3 and 7 are built; steps 4–6 (and the `/metrics` registry write in step 3) are still planned per RELEASE.md.
+Every step except step 6 (backup) is built; the `/metrics` registry write folded into step 4 is also still planned, per RELEASE.md.
 
 1. **Built** for scrape and remote-write; influx line protocol still planned. Each configured scrape target gets its own ticker in `internal/ingest/scrape`, firing on that target's own interval (config-driven, per-target — mirrors Prometheus's own scrape loop, not one global tick). Remote-write samples arrive event-driven whenever `internal/ingest/remotewrite`'s `ReceiveHandler` gets a `POST` (v0.3.0); line-protocol samples will similarly arrive via `internal/ingest/influx`'s HTTP handler once that's built.
-2. **Built.** Whichever source produced the batch normalizes it into Circa's own sample shape and hands it to `internal/ingest.Pipeline.Ingest()`.
-3. **Built (storage write); planned (`/metrics` write, v0.5.0).** The batch is handed to `internal/storage.Append()` — the only mandatory consumer, regardless of source. It will also be written to the standard Prometheus registry (serves `/metrics` for external scraping/federation) once that milestone lands.
-4. Planned, v0.4.0. If `features.alerts` is on, the same batch also goes to `internal/alert.Evaluate()` against tier-0 data; a rule crossing its threshold + hysteresis dispatches through `internal/alert/notify`.
-5. Planned, v0.4.0. If `features.ml` is on, the batch also feeds `internal/anomaly.Score()`, which embeds the anomaly bit back into the value written by step 3 (see [DESIGN/06](DESIGN/06_design_alerting_and_anomaly_detection.md) §6.2 — no separate anomaly time series).
+2. **Built: v0.4.0.** If `features.ml` is on, `cmd/circa`'s `handleSample` calls `internal/anomaly.Detector.Score()` **before** the sample reaches the pipeline, setting `ingest.Sample.Anomalous`. This runs ahead of (not as part of) step 4 deliberately — see the diagram note above and [DESIGN/10](DESIGN/10_ml_summary.md) §3.
+3. **Built.** Whichever source produced the batch normalizes it into Circa's own sample shape (with `Anomalous` already set, if applicable) and hands it to `internal/ingest.Pipeline.Ingest()`.
+4. **Built (storage write); planned (`/metrics` write, v0.5.0).** The batch is handed to `internal/storage.Append()` — the only mandatory consumer, regardless of source — which embeds the anomaly bit into the value it writes (`internal/storage/anomalybit.go`). It will also be written to the standard Prometheus registry (serves `/metrics` for external scraping/federation) once that milestone lands.
+5. **Built: v0.4.0.** If `features.alerts` is on, the same batch also goes to `internal/alert.Engine.Consume()` (a real `ingest.Consumer`, fanned out alongside `internal/storage`) against tier-0 data; a rule crossing its threshold/rate-of-change/anomaly-bit condition + hysteresis dispatches through `internal/alert/notify`.
 6. Planned, v0.5.0. If `features.backup` is on, `internal/backup`'s own scheduler (independent of any ingestion event) periodically reads everything past its watermark from `internal/storage` and appends it to the configured Iceberg table.
-7. **Built.** The UI (`web/`) and any external tool talk to `internal/query`, never to `internal/storage` directly — `internal/query` is the only reader, `internal/ingest`/`internal/backup` are the only writers.
+7. **Built: v0.4.0**, separately from the ingestion path. `internal/anomaly.Detector.Run()` retrains models on its own schedule (staggered across `RetrainInterval`), reading recent history back out through `internal/query`, not from the live ingestion stream.
+8. **Built.** The UI (`web/`) and any external tool talk to `internal/query`, never to `internal/storage` directly — `internal/query` is the only reader, `internal/ingest`/`internal/backup` are the only writers.
 
 Nothing downstream of step 2 needs to know whether a sample was scraped, received as line protocol, or received over remote-write — all three sources converge on the same `internal/ingest.Ingest()` call.
 
@@ -92,9 +94,9 @@ Most new sources need **no code change** — this is the point of treating inges
 
 ## Adding a new alert notifier
 
-1. Implement the dispatch interface in `internal/alert/notify/<channel>.go` (see the existing webhook/Slack notifiers for the shape once they exist).
-2. Register the channel type in `internal/config` under `alerting.notifiers`.
-3. Don't touch `internal/alert`'s rule-evaluation logic — notifiers are deliberately decoupled from the rule engine so adding a channel never risks the evaluation path.
+1. Implement `alert.Notifier` (one `Notify(alert.Alert) error` method) in a new `internal/alert/notify/<channel>.go` — see `webhook.go`/`slack.go` for the shape.
+2. Add the channel's `type` string to the `switch` in `cmd/circa/main.go`'s alert-engine wiring (constructing the concrete `notify.*` type from each `config.NotifierConfig`), and to `validateAlerting`'s type check in `internal/config/config.go`.
+3. Don't touch `internal/alert`'s rule-evaluation logic (`engine.go`) — notifiers are deliberately decoupled from the rule engine so adding a channel never risks the evaluation path.
 
 ## Deployment shape
 

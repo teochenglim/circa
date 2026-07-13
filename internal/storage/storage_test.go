@@ -21,7 +21,7 @@ func TestAppendAndQueryRangeRoundTrip(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		ts := base.Add(time.Duration(i) * interval)
-		if err := s.Append(key, interval, ts, float64(i)); err != nil {
+		if err := s.Append(key, interval, ts, float64(i), false); err != nil {
 			t.Fatalf("Append %d: %v", i, err)
 		}
 	}
@@ -55,7 +55,7 @@ func TestQueryRangeFiltersByTimeWindow(t *testing.T) {
 	interval := time.Second
 	base := time.Now().Truncate(time.Second)
 	for i := 0; i < 10; i++ {
-		s.Append(key, interval, base.Add(time.Duration(i)*interval), float64(i))
+		s.Append(key, interval, base.Add(time.Duration(i)*interval), float64(i), false)
 	}
 
 	results, err := s.QueryRange("temp", nil, base.Add(3*time.Second), base.Add(6*time.Second))
@@ -77,8 +77,8 @@ func TestQueryRangeFiltersByLabels(t *testing.T) {
 
 	interval := time.Second
 	now := time.Now()
-	s.Append(SeriesKey{Name: "cpu", Labels: map[string]string{"host": "a"}}, interval, now, 1)
-	s.Append(SeriesKey{Name: "cpu", Labels: map[string]string{"host": "b"}}, interval, now, 2)
+	s.Append(SeriesKey{Name: "cpu", Labels: map[string]string{"host": "a"}}, interval, now, 1, false)
+	s.Append(SeriesKey{Name: "cpu", Labels: map[string]string{"host": "b"}}, interval, now, 2, false)
 
 	results, err := s.QueryRange("cpu", map[string]string{"host": "b"}, now.Add(-time.Minute), now.Add(time.Minute))
 	if err != nil {
@@ -106,7 +106,7 @@ func TestRingBufferWrapsAtCapacity(t *testing.T) {
 	interval := time.Second
 	base := time.Now().Truncate(time.Second)
 	for i := 0; i < 20; i++ {
-		s.Append(key, interval, base.Add(time.Duration(i)*interval), float64(i))
+		s.Append(key, interval, base.Add(time.Duration(i)*interval), float64(i), false)
 	}
 
 	results, err := s.QueryRange("wrap", nil, base.Add(-time.Hour), base.Add(time.Hour))
@@ -133,7 +133,7 @@ func TestReopenPersistsAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if err := s1.Append(key, interval, now, 42); err != nil {
+	if err := s1.Append(key, interval, now, 42, false); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 	if err := s1.Close(); err != nil {
@@ -178,7 +178,7 @@ func TestSeriesSurvivesExternalDirDeletion(t *testing.T) {
 
 	key := SeriesKey{Name: "cpu"}
 	now := time.Now()
-	if err := s.Append(key, time.Second, now, 1); err != nil {
+	if err := s.Append(key, time.Second, now, 1, false); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 
@@ -201,7 +201,7 @@ func TestSeriesSurvivesExternalDirDeletion(t *testing.T) {
 	// both the pre-deletion and post-heal points come back once the chunk
 	// is rewritten to the recreated directory.
 	later := now.Add(time.Second)
-	if err := s.Append(key, time.Second, later, 2); err != nil {
+	if err := s.Append(key, time.Second, later, 2, false); err != nil {
 		t.Fatalf("Append after dir deletion should self-heal, got error: %v", err)
 	}
 

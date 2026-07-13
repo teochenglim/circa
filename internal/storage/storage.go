@@ -70,9 +70,12 @@ func (k SeriesKey) String() string {
 }
 
 // Point is one (timestamp, value) sample read back out of a series.
+// Anomalous reflects the LSB-embedded anomaly bit (see anomalybit.go) —
+// always false for a series that was never scored by internal/anomaly.
 type Point struct {
-	Time  time.Time
-	Value float64
+	Time      time.Time
+	Value     float64
+	Anomalous bool
 }
 
 // SeriesResult is one series' points matching a QueryRange call.
@@ -189,12 +192,14 @@ func (s *Store) loadSeries(hash string) error {
 
 // Append writes one point into key's ring buffer, creating the series
 // (chunk-sized from interval and the store's retention) on first write.
-func (s *Store) Append(key SeriesKey, interval time.Duration, t time.Time, value float64) error {
+// anomalous is embedded into value's on-disk bit pattern (anomalybit.go);
+// pass false for anything that was never scored by internal/anomaly.
+func (s *Store) Append(key SeriesKey, interval time.Duration, t time.Time, value float64, anomalous bool) error {
 	sr, err := s.seriesFor(key, interval)
 	if err != nil {
 		return err
 	}
-	return sr.write(t, value)
+	return sr.write(t, EncodeAnomalyBit(value, anomalous))
 }
 
 // Consume implements ingest.Consumer so a Store can be registered directly
@@ -205,7 +210,7 @@ func (s *Store) Consume(sample ingest.Sample) error {
 		interval = time.Second
 	}
 	key := SeriesKey{Name: sample.Name, Labels: sample.Labels}
-	return s.Append(key, interval, sample.Time, sample.Value)
+	return s.Append(key, interval, sample.Time, sample.Value, sample.Anomalous)
 }
 
 // Series lists every series currently tracked by this store — used by the
@@ -382,7 +387,7 @@ func (sr *series) readAll() ([]Point, error) {
 			return nil, err
 		}
 		for _, p := range chunkPoints {
-			points = append(points, Point{Time: time.Unix(p.Sec, 0), Value: p.Value})
+			points = append(points, Point{Time: time.Unix(p.Sec, 0), Value: p.Value, Anomalous: DecodeAnomalyBit(p.Value)})
 		}
 	}
 	return points, nil

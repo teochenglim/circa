@@ -1,7 +1,8 @@
 // Package httpapi wires circa's HTTP routes: /api/v1/query_range,
-// /api/v1/series, /status, /healthz, /readyz, the dashboard (/, /static/*)
-// from the web package, and — when enabled — the remote-write receiver.
-// /metrics arrives in a later milestone per RELEASE.md.
+// /api/v1/series, /api/v1/alerts, /api/v1/anomalies, /status, /healthz,
+// /readyz, the dashboard (/, /static/*) from the web package, and — when
+// enabled — the remote-write receiver. /metrics arrives in a later
+// milestone per RELEASE.md.
 package httpapi
 
 import (
@@ -13,12 +14,18 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/teochenglim/circa/internal/alert"
 	"github.com/teochenglim/circa/internal/auth"
 	"github.com/teochenglim/circa/internal/config"
 	"github.com/teochenglim/circa/internal/query"
 	"github.com/teochenglim/circa/internal/storage"
 	"github.com/teochenglim/circa/web"
 )
+
+// defaultAnomalyWindow is how far back GET /api/v1/anomalies looks by
+// default — recent enough to mean "right now" (DESIGN/06 §6.2's "what's
+// unusual right now"), overridable per-request with ?window=<seconds>.
+const defaultAnomalyWindow = 10 * time.Minute
 
 // Options configures the optional parts of the router beyond the always-on
 // query/series/status/healthz/dashboard routes.
@@ -30,6 +37,9 @@ type Options struct {
 	// WriteReceiver serves POST <Config.Push.Receive.Path> when non-nil —
 	// wire it up only when features.push_receive is on (DESIGN/04 §4.4.1).
 	WriteReceiver http.Handler
+	// AlertEngine backs GET /api/v1/alerts when non-nil (features.alerts
+	// on); nil means the endpoint always returns an empty list.
+	AlertEngine *alert.Engine
 }
 
 // NewRouter builds the HTTP handler for circa's API surface and dashboard.
@@ -41,6 +51,8 @@ func NewRouter(engine *query.Engine, opts Options) http.Handler {
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /api/v1/query_range", queryRangeHandler(engine))
 	protected.HandleFunc("GET /api/v1/series", seriesHandler(engine))
+	protected.HandleFunc("GET /api/v1/alerts", alertsHandler(opts.AlertEngine))
+	protected.HandleFunc("GET /api/v1/anomalies", anomaliesHandler(engine))
 	protected.HandleFunc("GET /status", statusHandler(opts.Config))
 	if opts.WriteReceiver != nil {
 		path := opts.Config.Push.Receive.Path
@@ -56,6 +68,44 @@ func NewRouter(engine *query.Engine, opts Options) http.Handler {
 	mux.HandleFunc("GET /readyz", healthzHandler)
 	mux.Handle("/", auth.Middleware(opts.Config.Auth.Users, protected))
 	return mux
+}
+
+// alertsHandler serves GET /api/v1/alerts — every currently-firing alert.
+// A nil engine (features.alerts off) always returns an empty list rather
+// than 404, so the UI's Alerts panel doesn't need to special-case the flag.
+func alertsHandler(engine *alert.Engine) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var alerts []alert.Alert
+		if engine != nil {
+			alerts = engine.Alerts()
+		}
+		writeJSON(w, http.StatusOK, struct {
+			Status string        `json:"status"`
+			Data   []alert.Alert `json:"data"`
+		}{Status: "success", Data: alerts})
+	}
+}
+
+// anomaliesHandler serves GET /api/v1/anomalies?window=<seconds> — the
+// ranked "what's unusual right now" list (DESIGN/06 §6.2). Empty whenever
+// features.ml is off, since nothing will have set the anomaly bit.
+func anomaliesHandler(engine *query.Engine) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		window := defaultAnomalyWindow
+		if s := r.URL.Query().Get("window"); s != "" {
+			sec, err := strconv.ParseFloat(s, 64)
+			if err != nil || sec <= 0 {
+				writeError(w, http.StatusBadRequest, "invalid window: "+s)
+				return
+			}
+			window = time.Duration(sec * float64(time.Second))
+		}
+		ranks := engine.AnomalyRanking(window, time.Now())
+		writeJSON(w, http.StatusOK, struct {
+			Status string              `json:"status"`
+			Data   []query.AnomalyRank `json:"data"`
+		}{Status: "success", Data: ranks})
+	}
 }
 
 // statusHandler serves GET /status — the effective merged config as

@@ -18,7 +18,7 @@ func TestQueryRangeReturnsMetricLabelsIncludingName(t *testing.T) {
 
 	now := time.Now()
 	key := storage.SeriesKey{Name: "up", Labels: map[string]string{"job": "node"}}
-	if err := store.Raw.Append(key, time.Second, now, 1); err != nil {
+	if err := store.Raw.Append(key, time.Second, now, 1, false); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 
@@ -102,5 +102,44 @@ func TestQueryRangeMinuteTierReturnsAggResults(t *testing.T) {
 	}
 	if p := agg[0].Points[0]; p.Min != 10 || p.Avg != 20 || p.Max != 30 {
 		t.Errorf("bucket = %+v, want min=10 avg=20 max=30", p)
+	}
+}
+
+func TestAnomalyRankingRanksByRateAndOmitsCleanSeries(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.OpenTiered(dir, time.Hour, 0, 0)
+	if err != nil {
+		t.Fatalf("storage.OpenTiered: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().Truncate(time.Second)
+	noisy := storage.SeriesKey{Name: "noisy"}
+	clean := storage.SeriesKey{Name: "clean"}
+	mixed := storage.SeriesKey{Name: "mixed"}
+
+	// noisy: 2/2 anomalous -> rate 1.0
+	store.Raw.Append(noisy, time.Second, now.Add(-2*time.Second), 1, true)
+	store.Raw.Append(noisy, time.Second, now.Add(-1*time.Second), 2, true)
+	// clean: 0/2 anomalous -> should not appear in the ranking at all
+	store.Raw.Append(clean, time.Second, now.Add(-2*time.Second), 1, false)
+	store.Raw.Append(clean, time.Second, now.Add(-1*time.Second), 2, false)
+	// mixed: 1/4 anomalous -> rate 0.25
+	store.Raw.Append(mixed, time.Second, now.Add(-4*time.Second), 1, false)
+	store.Raw.Append(mixed, time.Second, now.Add(-3*time.Second), 2, false)
+	store.Raw.Append(mixed, time.Second, now.Add(-2*time.Second), 3, false)
+	store.Raw.Append(mixed, time.Second, now.Add(-1*time.Second), 4, true)
+
+	e := New(store)
+	ranks := e.AnomalyRanking(time.Minute, now)
+
+	if len(ranks) != 2 {
+		t.Fatalf("expected 2 ranked series (clean series omitted), got %d: %+v", len(ranks), ranks)
+	}
+	if ranks[0].Metric["__name__"] != "noisy" || ranks[0].Rate != 1.0 {
+		t.Errorf("rank 0 = %+v, want noisy at rate 1.0", ranks[0])
+	}
+	if ranks[1].Metric["__name__"] != "mixed" || ranks[1].Rate != 0.25 {
+		t.Errorf("rank 1 = %+v, want mixed at rate 0.25", ranks[1])
 	}
 }

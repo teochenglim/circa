@@ -126,7 +126,7 @@ func (ts *TieredStore) Consume(sample ingest.Sample) error {
 	}
 	key := SeriesKey{Name: sample.Name, Labels: sample.Labels}
 
-	if err := ts.Raw.Append(key, interval, sample.Time, sample.Value); err != nil {
+	if err := ts.Raw.Append(key, interval, sample.Time, sample.Value, sample.Anomalous); err != nil {
 		return err
 	}
 
@@ -175,18 +175,21 @@ func (ts *TieredStore) rollup(store *Store, accs map[string]*bucketAccumulator, 
 	return nil
 }
 
+// appendAgg writes the min/avg/max rollup — always anomalous=false, since a
+// bucket average has no single anomaly verdict of its own; anomaly scoring
+// only applies to individual raw points (DESIGN/06 §6.2).
 func appendAgg(store *Store, key SeriesKey, interval time.Duration, t time.Time, acc *bucketAccumulator) error {
 	minKey := SeriesKey{Name: key.Name + "#min", Labels: key.Labels}
 	avgKey := SeriesKey{Name: key.Name + "#avg", Labels: key.Labels}
 	maxKey := SeriesKey{Name: key.Name + "#max", Labels: key.Labels}
 
-	if err := store.Append(minKey, interval, t, acc.min); err != nil {
+	if err := store.Append(minKey, interval, t, acc.min, false); err != nil {
 		return err
 	}
-	if err := store.Append(avgKey, interval, t, acc.avg()); err != nil {
+	if err := store.Append(avgKey, interval, t, acc.avg(), false); err != nil {
 		return err
 	}
-	return store.Append(maxKey, interval, t, acc.max)
+	return store.Append(maxKey, interval, t, acc.max, false)
 }
 
 // QueryRange reads tier for name (optionally narrowed by match) in
