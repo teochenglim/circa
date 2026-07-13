@@ -1,0 +1,12 @@
+{{define "nav"}}
+<nav class="tabs">
+  <a href="/" class='{{if eq .Page "overall"}}active{{end}}'>Overall</a>
+  <a href="/cpu" class='{{if eq .Page "cpu"}}active{{end}}'>CPU</a>
+  <a href="/memory" class='{{if eq .Page "memory"}}active{{end}}'>Memory</a>
+  <a href="/network" class='{{if eq .Page "network"}}active{{end}}'>Network</a>
+  <a href="/disk" class='{{if eq .Page "disk"}}active{{end}}'>Disk</a>
+  <a href="/filesystem" class='{{if eq .Page "filesystem"}}active{{end}}'>Filesystem</a>
+  <a href="/load" class='{{if eq .Page "load"}}active{{end}}'>Load</a>
+  <a href="/metrics" class='{{if eq .Page "metrics"}}active{{end}}'>Metrics</a>
+</nav>
+{{end}}

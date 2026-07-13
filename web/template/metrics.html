@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Circa — Metrics</title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+  <link rel="stylesheet" href="/static/css/uPlot.min.css">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <header>
+    <h1><span class="live-dot" aria-hidden="true"></span>Circa</h1>
+    <div class="controls">
+      <label>Metric
+        <select id="metric"><option value="">Loading…</option></select>
+      </label>
+      <label>Range
+        <select id="range">
+          <option value="900">Last 15 minutes</option>
+          <option value="3600" selected>Last 1 hour</option>
+          <option value="21600">Last 6 hours</option>
+          <option value="86400">Last 24 hours</option>
+          <option value="604800">Last 7 days</option>
+          <option value="2592000">Last 30 days</option>
+        </select>
+      </label>
+      <label class="checkbox"><input type="checkbox" id="autorefresh" checked> Auto-refresh</label>
+    </div>
+  </header>
+  {{template "nav" .}}
+
+  <main>
+    <div id="chart"></div>
+    <p id="status" class="status"></p>
+
+    <section class="panels">
+      <div class="panel">
+        <h2>Alerts</h2>
+        <div id="alerts-body" class="panel-body">Loading…</div>
+      </div>
+      <div class="panel">
+        <h2>What's unusual (last 10 min)</h2>
+        <div id="anomalies-body" class="panel-body">Loading…</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/js/uPlot.iife.min.js"></script>
+  <script src="/static/js/circa-chart.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

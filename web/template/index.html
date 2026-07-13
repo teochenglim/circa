@@ -3,48 +3,51 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Circa</title>
+  <title>Circa — Overall</title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
   <link rel="stylesheet" href="/static/css/uPlot.min.css">
   <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
   <header>
-    <h1>Circa</h1>
-    <div class="controls">
-      <label>Metric
-        <select id="metric"><option value="">Loading…</option></select>
-      </label>
-      <label>Range
-        <select id="range">
-          <option value="900">Last 15 minutes</option>
-          <option value="3600" selected>Last 1 hour</option>
-          <option value="21600">Last 6 hours</option>
-          <option value="86400">Last 24 hours</option>
-          <option value="604800">Last 7 days</option>
-          <option value="2592000">Last 30 days</option>
-        </select>
-      </label>
-      <label class="checkbox"><input type="checkbox" id="autorefresh" checked> Auto-refresh</label>
-    </div>
+    <h1><span class="live-dot" aria-hidden="true"></span>Circa</h1>
   </header>
+  {{template "nav" .}}
 
   <main>
-    <div id="chart"></div>
-    <p id="status" class="status"></p>
-
-    <section class="panels">
-      <div class="panel">
-        <h2>Alerts</h2>
-        <div id="alerts-body" class="panel-body">Loading…</div>
-      </div>
-      <div class="panel">
-        <h2>What's unusual (last 10 min)</h2>
-        <div id="anomalies-body" class="panel-body">Loading…</div>
+    <section id="overview" class="overview">
+      <div class="overview-grid">
+        <div class="overview-card cat-cpu">
+          <h3>CPU</h3>
+          <div id="overview-cpu" class="overview-chart">Loading…</div>
+        </div>
+        <div class="overview-card cat-memory">
+          <h3>Memory</h3>
+          <div id="overview-memory" class="overview-chart">Loading…</div>
+        </div>
+        <div class="overview-card cat-network">
+          <h3>Network (primary)</h3>
+          <div id="overview-network" class="overview-chart">Loading…</div>
+        </div>
+        <div class="overview-card cat-disk">
+          <h3>Disk I/O</h3>
+          <div id="overview-disk" class="overview-chart">Loading…</div>
+        </div>
+        <div class="overview-card cat-filesystem">
+          <h3>Filesystem (/)</h3>
+          <div id="overview-filesystem" class="overview-chart">Loading…</div>
+        </div>
+        <div class="overview-card cat-load">
+          <h3>Load average</h3>
+          <div id="overview-load" class="overview-chart">Loading…</div>
+        </div>
       </div>
     </section>
   </main>
 
   <script src="/static/js/uPlot.iife.min.js"></script>
-  <script src="/static/js/app.js"></script>
+  <script src="/static/js/circa-chart.js"></script>
+  <script src="/static/js/circa-data.js"></script>
+  <script src="/static/js/overview.js"></script>
 </body>
 </html>

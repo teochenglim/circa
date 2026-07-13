@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Circa — Disk</title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+  <link rel="stylesheet" href="/static/css/uPlot.min.css">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body data-category="disk">
+  <header>
+    <h1><span class="live-dot" aria-hidden="true"></span>Circa</h1>
+  </header>
+  {{template "nav" .}}
+
+  <main>
+    <h2 class="page-heading cat-disk">Read — per device (Linux) or system-wide total (macOS)</h2>
+    <div id="detail-chart-1" class="detail-chart">Loading…</div>
+
+    <h2 class="page-heading cat-disk">Write</h2>
+    <div id="detail-chart-2" class="detail-chart">Loading…</div>
+  </main>
+
+  <script src="/static/js/uPlot.iife.min.js"></script>
+  <script src="/static/js/circa-chart.js"></script>
+  <script src="/static/js/circa-data.js"></script>
+  <script src="/static/js/detail.js"></script>
+</body>
+</html>

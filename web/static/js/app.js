@@ -1,3 +1,8 @@
+// app.js: the "Metrics" page (v0.6.0 renamed this from the whole
+// dashboard's only view to one tab among several — see index.html/cpu.html/
+// etc. and detail.js/overview.js for the others) — manual metric picker +
+// the existing Alerts/"what's unusual" panels. Depends on circa-chart.js
+// (window.CircaChart) being loaded first, same as every other page's chart.
 (function () {
   "use strict";
 
@@ -139,7 +144,9 @@
       height: 400,
       series: uPlotSeries,
       scales: { x: { time: true } },
+      legend: window.CircaChart.legendOpts(),
     }, data, chartEl);
+    window.CircaChart.bindShowAll(plot);
   }
 
   function loadAndRender() {

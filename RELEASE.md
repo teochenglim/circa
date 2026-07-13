@@ -1,6 +1,6 @@
 # Release History
 
-`cmd/circa` landed with v0.1.0, UI + compression with v0.2.0, config/auth/push ingestion with v0.3.0, alerting + anomaly detection with v0.4.0 — see [ARCHITECTURE.md](ARCHITECTURE.md) for the as-built layout. The table below tracks the *planned* release scope per [DESIGN/09](DESIGN/09_design_tech_stack_and_roadmap.md) §9.2's milestone list, so progress becomes traceable as each one is actually built.
+`cmd/circa` landed with v0.1.0, UI + compression with v0.2.0, config/auth/push ingestion with v0.3.0, alerting + anomaly detection with v0.4.0, built-in self-collection with v0.5.0, a Netdata-style tabbed dashboard with v0.6.0 — see [ARCHITECTURE.md](ARCHITECTURE.md) for the as-built layout. The table below tracks the *planned* release scope per [DESIGN/09](DESIGN/09_design_tech_stack_and_roadmap.md) §9.2's milestone list, so progress becomes traceable as each one is actually built.
 
 Newest first.
 
@@ -9,8 +9,8 @@ Newest first.
 | [v1.1.0](RELEASE/v1.1.0.md) | Windows (and other non-Linux/non-macOS) system collection | Not started |
 | [v1.0.0](RELEASE/v1.0.0.md) | Hardening, sizing calculator, packaging, docs | Not started |
 | [v0.7.0](RELEASE/v0.7.0.md) | Federation & self-expose (backup CDC to Iceberg, federation search, `/metrics`) | Not started |
-| [v0.6.0](RELEASE/v0.6.0.md) | Netdata-style dashboard (zero-config system overview) | Not started |
-| [v0.5.0](RELEASE/v0.5.0.md) | Built-in system collection, Linux + macOS (`/proc`/`/sys`/`sysctl`, node_exporter/Netdata-referenced) | Not started |
+| [v0.6.0](RELEASE/v0.6.0.md) | Netdata-style dashboard (zero-config system overview) | **Shipped** |
+| [v0.5.0](RELEASE/v0.5.0.md) | Built-in system collection, Linux + macOS (`/proc`/`/sys`/`sysctl`, node_exporter/Netdata-referenced) | **Shipped** |
 | [v0.4.0](RELEASE/v0.4.0.md) | Intelligence (alerting, anomaly detection) | **Shipped** |
 | [v0.3.0](RELEASE/v0.3.0.md) | Operability (config & CLI, auth, push/pull remote-write ingestion) | **Shipped** |
 | [v0.2.0](RELEASE/v0.2.0.md) | Visibility (UI, compression) | **Shipped** |
