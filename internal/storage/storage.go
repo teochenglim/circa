@@ -1,12 +1,22 @@
-// Package storage is circa's tier-0 store: one fixed-size, on-disk
-// round-robin buffer per series, per DESIGN/03 §3.1. No compression yet
-// (that's v0.2.0's Gorilla delta+XOR pass) and no mmap — a plain os.File
-// read/write per point is simple, correct, and fast enough at scrape-interval
-// write rates; revisit if profiling says otherwise once compression lands.
+// Package storage is circa's RRD-style store: a fixed number of Gorilla-
+// compressed chunks per series, round-robin over time, per DESIGN/03 §3.1
+// and §3.2. Store represents one tier (raw, minute, or hour — see tiered.go
+// for how the three are wired together with rollups); each tier is a
+// directory of one subdirectory per series.
 //
-// Disk usage per series is constant: capacity = retention / interval slots,
-// each slot a fixed 16-byte (timestamp, value) record, so a series never
-// grows no matter how long circa runs — the write position just wraps.
+// Each series keeps a fixed ring of chunksPerSeries chunk files. A chunk
+// holds a run of points, Gorilla delta-of-delta-timestamp + XOR-value
+// encoded (gorilla.go) — re-encoded from scratch and rewritten to disk on
+// every append, which is simple and correct at scrape-interval write rates,
+// though not the most efficient possible I/O pattern; revisit if profiling
+// says otherwise. A chunk's on-disk size reflects its actual compressed
+// content (no padding to a worst-case size), so total directory size is a
+// true measure of compression achieved, not just an allocation.
+//
+// Disk usage per series is still bounded and constant: chunksPerSeries
+// slots, each holding at most maxPointsPerChunk points sized off the tier's
+// retention and the series' interval, so a series never grows no matter how
+// long circa runs — old chunks are simply overwritten in place.
 package storage
 
 import (
@@ -15,7 +25,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,10 +35,11 @@ import (
 	"github.com/teochenglim/circa/internal/ingest"
 )
 
-const (
-	recordSize = 16 // 8 bytes unix-nano timestamp + 8 bytes float64 value bits
-	headerSize = 12 // 4 bytes capacity (uint32) + 8 bytes interval-nanos (int64)
-)
+// chunksPerSeries is the fixed ring size, in chunks, for every series in
+// every tier. maxPointsPerChunk is derived per-series from retention/
+// interval so the ring always covers the configured retention regardless of
+// how coarse or fine that series' interval is.
+const chunksPerSeries = 8
 
 // SeriesKey identifies one time series by metric name + label set.
 type SeriesKey struct {
@@ -38,7 +48,7 @@ type SeriesKey struct {
 }
 
 // String is a canonical, order-independent identity for the key — used only
-// to derive a stable on-disk filename, never returned to callers.
+// to derive a stable on-disk directory name, never returned to callers.
 func (k SeriesKey) String() string {
 	names := make([]string, 0, len(k.Labels))
 	for n := range k.Labels {
@@ -72,14 +82,19 @@ type SeriesResult struct {
 }
 
 type series struct {
-	mu       sync.Mutex
-	key      SeriesKey
-	interval time.Duration
-	capacity int
-	file     *os.File
+	mu                sync.Mutex
+	key               SeriesKey
+	interval          time.Duration
+	maxPointsPerChunk int
+	chunkSeconds      int64
+	dir               string
+
+	openChunkIndex  int
+	openChunkPoints []chunkPoint
 }
 
-// Store holds every series' tier-0 ring buffer under one directory.
+// Store holds every series' chunked ring buffer for one tier under one
+// directory.
 type Store struct {
 	mu        sync.RWMutex
 	dir       string
@@ -89,16 +104,15 @@ type Store struct {
 }
 
 type seriesMeta struct {
-	Name       string            `json:"name"`
-	Labels     map[string]string `json:"labels"`
-	IntervalNs int64             `json:"interval_ns"`
-	Capacity   int               `json:"capacity"`
+	Name              string            `json:"name"`
+	Labels            map[string]string `json:"labels"`
+	IntervalNs        int64             `json:"interval_ns"`
+	MaxPointsPerChunk int               `json:"max_points_per_chunk"`
 }
 
 // Open creates dir if needed and reloads any series already persisted there
-// from a previous run. retention sizes the ring buffer for series created
-// from now on; series already on disk keep the capacity they were created
-// with.
+// from a previous run. retention sizes new series' chunks; series already on
+// disk keep the chunk sizing they were created with.
 func Open(dir string, retention time.Duration) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating storage dir %s: %w", dir, err)
@@ -116,12 +130,11 @@ func Open(dir string, retention time.Duration) (*Store, error) {
 		return nil, fmt.Errorf("reading storage dir %s: %w", dir, err)
 	}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".meta.json") {
+		if !e.IsDir() {
 			continue
 		}
-		hash := strings.TrimSuffix(e.Name(), ".meta.json")
-		if err := s.loadSeries(hash); err != nil {
-			return nil, fmt.Errorf("loading series %s: %w", hash, err)
+		if err := s.loadSeries(e.Name()); err != nil {
+			return nil, fmt.Errorf("loading series %s: %w", e.Name(), err)
 		}
 	}
 
@@ -129,7 +142,8 @@ func Open(dir string, retention time.Duration) (*Store, error) {
 }
 
 func (s *Store) loadSeries(hash string) error {
-	metaBytes, err := os.ReadFile(filepath.Join(s.dir, hash+".meta.json"))
+	seriesDir := filepath.Join(s.dir, hash)
+	metaBytes, err := os.ReadFile(filepath.Join(seriesDir, "meta.json"))
 	if err != nil {
 		return err
 	}
@@ -138,25 +152,43 @@ func (s *Store) loadSeries(hash string) error {
 		return err
 	}
 
-	f, err := os.OpenFile(filepath.Join(s.dir, hash+".tier0"), os.O_RDWR, 0o644)
-	if err != nil {
-		return err
+	sr := &series{
+		key:               SeriesKey{Name: meta.Name, Labels: meta.Labels},
+		interval:          time.Duration(meta.IntervalNs),
+		maxPointsPerChunk: meta.MaxPointsPerChunk,
+		chunkSeconds:      chunkSeconds(time.Duration(meta.IntervalNs), meta.MaxPointsPerChunk),
+		dir:               seriesDir,
+		openChunkIndex:    -1,
 	}
 
-	key := SeriesKey{Name: meta.Name, Labels: meta.Labels}
-	sr := &series{
-		key:      key,
-		interval: time.Duration(meta.IntervalNs),
-		capacity: meta.Capacity,
-		file:     f,
+	// Resume mid-chunk appending correctly: find whichever persisted chunk
+	// holds the most recent point and make it the "open" one, rather than
+	// starting a fresh chunk that could collide with (and silently lose) an
+	// existing partially-written slot on the very next Append.
+	var latestSec int64 = -1
+	for idx := 0; idx < chunksPerSeries; idx++ {
+		points, err := sr.readChunkFile(idx)
+		if err != nil {
+			return fmt.Errorf("reading chunk %d: %w", idx, err)
+		}
+		if len(points) == 0 {
+			continue
+		}
+		last := points[len(points)-1].Sec
+		if last > latestSec {
+			latestSec = last
+			sr.openChunkIndex = idx
+			sr.openChunkPoints = points
+		}
 	}
-	s.byKey[key.String()] = sr
-	s.byName[key.Name] = append(s.byName[key.Name], sr)
+
+	s.byKey[sr.key.String()] = sr
+	s.byName[sr.key.Name] = append(s.byName[sr.key.Name], sr)
 	return nil
 }
 
-// Append writes one point into key's tier-0 ring buffer, creating the
-// series (sized from interval and the store's retention) on first write.
+// Append writes one point into key's ring buffer, creating the series
+// (chunk-sized from interval and the store's retention) on first write.
 func (s *Store) Append(key SeriesKey, interval time.Duration, t time.Time, value float64) error {
 	sr, err := s.seriesFor(key, interval)
 	if err != nil {
@@ -176,6 +208,31 @@ func (s *Store) Consume(sample ingest.Sample) error {
 	return s.Append(key, interval, sample.Time, sample.Value)
 }
 
+// Series lists every series currently tracked by this store — used by the
+// UI to discover what's available to chart, and by federation-adjacent
+// tooling later.
+func (s *Store) Series() []SeriesKey {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	keys := make([]SeriesKey, 0, len(s.byKey))
+	for _, sr := range s.byKey {
+		keys = append(keys, sr.key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
+	return keys
+}
+
+// chunkSeconds derives how much wall-clock time one chunk covers: enough
+// points to hold maxPointsPerChunk samples at interval apart.
+func chunkSeconds(interval time.Duration, maxPointsPerChunk int) int64 {
+	intervalSeconds := int64(interval / time.Second)
+	if intervalSeconds < 1 {
+		intervalSeconds = 1
+	}
+	return intervalSeconds * int64(maxPointsPerChunk)
+}
+
 func (s *Store) seriesFor(key SeriesKey, interval time.Duration) (*series, error) {
 	canonical := key.String()
 
@@ -192,96 +249,149 @@ func (s *Store) seriesFor(key SeriesKey, interval time.Duration) (*series, error
 		return sr, nil
 	}
 
-	capacity := int(s.retention / interval)
-	if capacity < 1 {
-		capacity = 1
+	totalPoints := int(s.retention / interval)
+	if totalPoints < 1 {
+		totalPoints = 1
+	}
+	maxPointsPerChunk := totalPoints / chunksPerSeries
+	if maxPointsPerChunk < 1 {
+		maxPointsPerChunk = 1
 	}
 
 	hash := sha256.Sum256([]byte(canonical))
-	hexHash := hex.EncodeToString(hash[:])
-
-	f, err := os.Create(filepath.Join(s.dir, hexHash+".tier0"))
-	if err != nil {
-		return nil, fmt.Errorf("creating series file: %w", err)
-	}
-	if err := f.Truncate(int64(headerSize + capacity*recordSize)); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("sizing series file: %w", err)
-	}
-
-	header := make([]byte, headerSize)
-	binary.BigEndian.PutUint32(header[0:4], uint32(capacity))
-	binary.BigEndian.PutUint64(header[4:12], uint64(interval.Nanoseconds()))
-	if _, err := f.WriteAt(header, 0); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("writing series header: %w", err)
+	seriesDir := filepath.Join(s.dir, hex.EncodeToString(hash[:]))
+	if err := os.MkdirAll(seriesDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating series dir: %w", err)
 	}
 
 	meta := seriesMeta{
-		Name:       key.Name,
-		Labels:     key.Labels,
-		IntervalNs: interval.Nanoseconds(),
-		Capacity:   capacity,
+		Name:              key.Name,
+		Labels:            key.Labels,
+		IntervalNs:        interval.Nanoseconds(),
+		MaxPointsPerChunk: maxPointsPerChunk,
 	}
 	metaBytes, err := json.Marshal(meta)
 	if err != nil {
-		f.Close()
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(s.dir, hexHash+".meta.json"), metaBytes, 0o644); err != nil {
-		f.Close()
+	if err := os.WriteFile(filepath.Join(seriesDir, "meta.json"), metaBytes, 0o644); err != nil {
 		return nil, fmt.Errorf("writing series metadata: %w", err)
 	}
 
 	newSeries := &series{
-		key:      key,
-		interval: interval,
-		capacity: capacity,
-		file:     f,
+		key:               key,
+		interval:          interval,
+		maxPointsPerChunk: maxPointsPerChunk,
+		chunkSeconds:      chunkSeconds(interval, maxPointsPerChunk),
+		dir:               seriesDir,
+		openChunkIndex:    -1,
 	}
 	s.byKey[canonical] = newSeries
 	s.byName[key.Name] = append(s.byName[key.Name], newSeries)
 	return newSeries, nil
 }
 
+func (sr *series) chunkFilePath(idx int) string {
+	return filepath.Join(sr.dir, fmt.Sprintf("chunk-%d.bin", idx))
+}
+
+// readChunkFile decodes chunk idx, or returns nil if that slot has never
+// been written.
+func (sr *series) readChunkFile(idx int) ([]chunkPoint, error) {
+	data, err := os.ReadFile(sr.chunkFilePath(idx))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(data) < 2 {
+		return nil, fmt.Errorf("chunk file too short (%d bytes)", len(data))
+	}
+	n := int(binary.BigEndian.Uint16(data[0:2]))
+	return decodeChunk(data[2:], n)
+}
+
+func (sr *series) writeChunkFile(idx int, points []chunkPoint) error {
+	if len(points) > 1<<16-1 {
+		return fmt.Errorf("chunk holds %d points, exceeds uint16 header capacity", len(points))
+	}
+	// Self-heal if the series directory went missing (e.g. an external
+	// cleanup while circa was running) rather than failing every append
+	// for that series until restart.
+	if err := os.MkdirAll(sr.dir, 0o755); err != nil {
+		return fmt.Errorf("recreating series dir: %w", err)
+	}
+	header := make([]byte, 2)
+	binary.BigEndian.PutUint16(header, uint16(len(points)))
+	body := encodeChunk(points)
+	return os.WriteFile(sr.chunkFilePath(idx), append(header, body...), 0o644)
+}
+
+// write appends one point to whichever chunk its timestamp falls in,
+// rotating to a fresh chunk (silently discarding whatever stale data
+// occupied that ring slot from chunksPerSeries cycles ago) when the point
+// belongs to a different chunk than the one currently open.
 func (sr *series) write(t time.Time, value float64) error {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 
-	slot := (t.UnixNano() / sr.interval.Nanoseconds()) % int64(sr.capacity)
-	if slot < 0 {
-		slot += int64(sr.capacity)
+	sec := t.Unix()
+	chunkNum := sec / sr.chunkSeconds
+	idx := int(((chunkNum % chunksPerSeries) + chunksPerSeries) % chunksPerSeries)
+
+	if idx != sr.openChunkIndex {
+		sr.openChunkIndex = idx
+		sr.openChunkPoints = nil
+	} else if n := len(sr.openChunkPoints); n > 0 && sec <= sr.openChunkPoints[n-1].Sec {
+		// Out-of-order or duplicate-second point: dropping it keeps the
+		// chunk's timestamps strictly increasing, which the delta-of-delta
+		// encoding in gorilla.go requires.
+		return nil
 	}
 
-	record := make([]byte, recordSize)
-	binary.BigEndian.PutUint64(record[0:8], uint64(t.UnixNano()))
-	binary.BigEndian.PutUint64(record[8:16], math.Float64bits(value))
-
-	offset := int64(headerSize) + slot*recordSize
-	_, err := sr.file.WriteAt(record, offset)
-	return err
+	sr.openChunkPoints = append(sr.openChunkPoints, chunkPoint{Sec: sec, Value: value})
+	return sr.writeChunkFile(idx, sr.openChunkPoints)
 }
 
 func (sr *series) readAll() ([]Point, error) {
 	sr.mu.Lock()
-	defer sr.mu.Unlock()
+	dir := sr.dir
+	sr.mu.Unlock()
 
-	buf := make([]byte, sr.capacity*recordSize)
-	if _, err := sr.file.ReadAt(buf, headerSize); err != nil {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil // no data yet (or the dir vanished externally) - not a query error
+	}
+	if err != nil {
 		return nil, err
 	}
 
-	points := make([]Point, 0, sr.capacity)
-	for i := 0; i < sr.capacity; i++ {
-		off := i * recordSize
-		ts := int64(binary.BigEndian.Uint64(buf[off : off+8]))
-		if ts == 0 {
-			continue // slot never written
+	var points []Point
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), "chunk-") {
+			continue
 		}
-		value := math.Float64frombits(binary.BigEndian.Uint64(buf[off+8 : off+16]))
-		points = append(points, Point{Time: time.Unix(0, ts), Value: value})
+		idxStr := strings.TrimSuffix(strings.TrimPrefix(e.Name(), "chunk-"), ".bin")
+		idx, err := parseChunkIndex(idxStr)
+		if err != nil {
+			continue
+		}
+		chunkPoints, err := sr.readChunkFile(idx)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range chunkPoints {
+			points = append(points, Point{Time: time.Unix(p.Sec, 0), Value: p.Value})
+		}
 	}
 	return points, nil
+}
+
+func parseChunkIndex(s string) (int, error) {
+	var idx int
+	_, err := fmt.Sscanf(s, "%d", &idx)
+	return idx, err
 }
 
 // QueryRange returns every series named name (optionally narrowed by an
@@ -323,16 +433,8 @@ func labelsMatch(labels, match map[string]string) bool {
 	return true
 }
 
-// Close releases every series' open file handle.
+// Close is a no-op today (chunk files are opened/closed per operation, not
+// held open) — kept so callers don't need to change when that changes.
 func (s *Store) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	var firstErr error
-	for _, sr := range s.byKey {
-		if err := sr.file.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
+	return nil
 }

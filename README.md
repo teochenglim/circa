@@ -8,7 +8,7 @@ Circa doesn't collect metrics itself. It ingests them from whatever's already pr
 
 See [DESIGN.md](DESIGN.md) for the full design, [ARCHITECTURE.md](ARCHITECTURE.md) for how the code is (intended to be) organized, and [RELEASE.md](RELEASE.md) for what's actually shipped so far.
 
-> **Status**: v0.1.0 shipped — scrape ingestion, tier-0 storage, and `/api/v1/query_range` work end to end; the Quickstart below runs against real code. UI, compression, config CLI, auth, push/pull ingestion, alerting, anomaly detection, and backup are still planned — see [RELEASE.md](RELEASE.md) for what's shipped vs. upcoming per version.
+> **Status**: the Quickstart below runs against real code, not a future promise — see [RELEASE.md](RELEASE.md) for exactly what's shipped vs. still planned per version.
 
 ## Quickstart
 
@@ -19,7 +19,7 @@ make config-init            # copies config.example.yaml -> config.yaml
 go run ./cmd/circa -config config.yaml
 ```
 
-Visit `http://localhost:9100`. Metrics are stored locally under `storage.path` from your config (default `/var/lib/circa/data`, override it in `config.yaml` for local runs).
+Visit `http://localhost:9100` for the dashboard. Metrics are stored locally under `storage.path` from your config (default `/var/lib/circa/data`, override it in `config.yaml` for local runs).
 
 ### Option 2 — Docker Compose
 
@@ -92,7 +92,7 @@ make build           # binary in ./bin
 ## Releasing
 
 ```bash
-make release VERSION=0.2.0   # bumps VERSION + helm/k8s image tags, pushes, tags, pushes tag
+make release VERSION=0.3.0   # bumps VERSION + helm/k8s image tags, pushes, tags, pushes tag
 ```
 
 Pushing a `v*` tag triggers `.github/workflows/release.yml`: tests gate the build, then a cross-platform binary matrix (linux/darwin/windows × amd64/arm64) is built and attached to a GitHub Release, and a multi-arch (amd64/arm64) Docker image is built and pushed to GHCR.

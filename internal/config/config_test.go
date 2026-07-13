@@ -79,6 +79,29 @@ storage:
 	}
 }
 
+func TestDurationParsesDayAndYearUnits(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeFile(t, path, `
+storage:
+  retention:
+    raw: 1h
+    minute: 7d
+    hour: 1y
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := time.Duration(cfg.Storage.Retention.Minute); got != 7*24*time.Hour {
+		t.Errorf("Retention.Minute = %v, want 168h (7d)", got)
+	}
+	if got := time.Duration(cfg.Storage.Retention.Hour); got != 365*24*time.Hour {
+		t.Errorf("Retention.Hour = %v, want 8760h (1y)", got)
+	}
+}
+
 func TestLoadRejectsTargetMissingURL(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

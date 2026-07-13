@@ -38,7 +38,11 @@ func run(configPath string, logger *slog.Logger) error {
 		return err
 	}
 
-	store, err := storage.Open(cfg.Storage.Path, time.Duration(cfg.Storage.Retention.Raw))
+	store, err := storage.OpenTiered(cfg.Storage.Path,
+		time.Duration(cfg.Storage.Retention.Raw),
+		time.Duration(cfg.Storage.Retention.Minute),
+		time.Duration(cfg.Storage.Retention.Hour),
+	)
 	if err != nil {
 		return err
 	}

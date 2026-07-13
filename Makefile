@@ -52,6 +52,35 @@ clean: ## Remove local build artifacts and local RRD data
 config-init: ## Copy config.example.yaml to config.yaml if it doesn't exist yet
 	@test -f config.yaml && echo "config.yaml already exists" || cp config.example.yaml config.yaml
 
+## --- local dev (real node_exporter) ----------------------------------------
+## A real exporter to scrape against, instead of the fake ones used in unit
+## tests. Download a release yourself into ./bin/node_exporter (gitignored,
+## see .gitignore's /bin/ entry) from
+## https://github.com/prometheus/node_exporter/releases - bin/config.yaml
+## already points circa at it on its default port :9100.
+
+.PHONY: node-exporter-up
+node-exporter-up: ## Start ./bin/node_exporter in the background, logging to bin/node_exporter.log
+	@test -x bin/node_exporter || { echo "bin/node_exporter not found - download a release into ./bin/ first"; exit 1; }
+	@./bin/node_exporter > bin/node_exporter.log 2>&1 & echo $$! > bin/node_exporter.pid
+	@echo "node_exporter started (pid $$(cat bin/node_exporter.pid)) - logs: bin/node_exporter.log"
+
+.PHONY: node-exporter-down
+node-exporter-down: ## Stop the node_exporter started by node-exporter-up
+	@test -f bin/node_exporter.pid && kill $$(cat bin/node_exporter.pid) 2>/dev/null; rm -f bin/node_exporter.pid
+	@echo "node_exporter stopped"
+
+.PHONY: local-up
+local-up: build node-exporter-up ## Start circa (bin/config.yaml) in the background alongside node_exporter - visit http://localhost:9090
+	@./bin/circa -config bin/config.yaml > bin/circa.log 2>&1 & echo $$! > bin/circa.pid
+	@echo "circa started (pid $$(cat bin/circa.pid)) - visit http://localhost:9090"
+
+.PHONY: local-down
+local-down: ## Stop the circa + node_exporter started by local-up
+	@test -f bin/circa.pid && kill $$(cat bin/circa.pid) 2>/dev/null; rm -f bin/circa.pid
+	@echo "circa stopped"
+	@$(MAKE) node-exporter-down
+
 ## --- docker --------------------------------------------------------------
 
 .PHONY: docker-build

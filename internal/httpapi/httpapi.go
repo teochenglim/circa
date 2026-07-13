@@ -1,8 +1,7 @@
-// Package httpapi wires circa's HTTP routes. v0.1.0 only serves
-// /api/v1/query_range plus /healthz and /readyz (the k8s DaemonSet manifests
-// already probe /healthz, so it ships now rather than waiting for a later
-// milestone). /metrics, the dashboard, /status, and the write receivers all
-// arrive in later milestones per RELEASE.md.
+// Package httpapi wires circa's HTTP routes: /api/v1/query_range,
+// /api/v1/series, /healthz, /readyz, and the dashboard (/, /static/*) from
+// the web package. /metrics, /status, and the write receivers all arrive in
+// later milestones per RELEASE.md.
 package httpapi
 
 import (
@@ -13,14 +12,18 @@ import (
 	"time"
 
 	"github.com/teochenglim/circa/internal/query"
+	"github.com/teochenglim/circa/internal/storage"
+	"github.com/teochenglim/circa/web"
 )
 
-// NewRouter builds the HTTP handler for circa's API surface.
+// NewRouter builds the HTTP handler for circa's API surface and dashboard.
 func NewRouter(engine *query.Engine) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/query_range", queryRangeHandler(engine))
+	mux.HandleFunc("GET /api/v1/series", seriesHandler(engine))
 	mux.HandleFunc("GET /healthz", healthzHandler)
 	mux.HandleFunc("GET /readyz", healthzHandler)
+	mux.Handle("/", web.Handler())
 	return mux
 }
 
@@ -40,16 +43,21 @@ type apiData struct {
 	Result     []apiSeries `json:"result"`
 }
 
+// apiSeries mirrors Prometheus's matrix result shape for Values (raw/tier-0).
+// Min/Max are only populated for tier=minute|hour, alongside Values holding
+// the bucket average — so a tier-0 client that ignores unknown fields sees
+// the same shape it always has.
 type apiSeries struct {
 	Metric map[string]string `json:"metric"`
 	Values [][2]any          `json:"values"`
+	Min    [][2]any          `json:"min,omitempty"`
+	Max    [][2]any          `json:"max,omitempty"`
 }
 
-// queryRangeHandler serves GET /api/v1/query_range?metric=<name>&labels=k=v,k=v&start=<ts>&end=<ts>.
+// queryRangeHandler serves GET /api/v1/query_range?metric=<name>&labels=k=v,k=v&start=<ts>&end=<ts>&tier=raw|minute|hour.
 // Naming and response shape deliberately echo Prometheus's own HTTP API
 // (DESIGN/05 §5) though matching is exact-label-equality only for now — no
-// PromQL, no regex matchers, no step-based downsampling (tier-1/2 arrive in
-// v0.2.0).
+// PromQL, no regex matchers.
 func queryRangeHandler(engine *query.Engine) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		metric := r.URL.Query().Get("metric")
@@ -79,33 +87,82 @@ func queryRangeHandler(engine *query.Engine) http.HandlerFunc {
 			return
 		}
 
-		results, err := engine.QueryRange(metric, match, query.Range{Start: start, End: end})
+		tier, err := parseTier(r.URL.Query().Get("tier"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		results, aggResults, err := engine.QueryRange(metric, match, tier, query.Range{Start: start, End: end})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
-		data := apiData{ResultType: "matrix", Result: make([]apiSeries, 0, len(results))}
-		for _, res := range results {
-			values := make([][2]any, 0, len(res.Points))
-			for _, p := range res.Points {
-				values = append(values, [2]any{
-					float64(p.Time.UnixNano()) / 1e9,
-					strconv.FormatFloat(p.Value, 'g', -1, 64),
-				})
+		data := apiData{ResultType: "matrix"}
+		if tier == storage.TierRaw {
+			data.Result = make([]apiSeries, 0, len(results))
+			for _, res := range results {
+				data.Result = append(data.Result, apiSeries{Metric: res.Metric, Values: pointValues(res.Points)})
 			}
-			data.Result = append(data.Result, apiSeries{Metric: res.Metric, Values: values})
+		} else {
+			data.Result = make([]apiSeries, 0, len(aggResults))
+			for _, res := range aggResults {
+				values := make([][2]any, 0, len(res.Points))
+				mins := make([][2]any, 0, len(res.Points))
+				maxes := make([][2]any, 0, len(res.Points))
+				for _, p := range res.Points {
+					ts := float64(p.Time.Unix())
+					values = append(values, [2]any{ts, formatFloat(p.Avg)})
+					mins = append(mins, [2]any{ts, formatFloat(p.Min)})
+					maxes = append(maxes, [2]any{ts, formatFloat(p.Max)})
+				}
+				data.Result = append(data.Result, apiSeries{Metric: res.Metric, Values: values, Min: mins, Max: maxes})
+			}
 		}
 
 		writeJSON(w, http.StatusOK, apiResponse{Status: "success", Data: &data})
 	}
 }
 
+// seriesHandler serves GET /api/v1/series — every currently-known series'
+// name and labels, so the dashboard can populate a metric picker without
+// the caller needing to already know what exists.
+func seriesHandler(engine *query.Engine) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		type seriesEntry struct {
+			Name   string            `json:"name"`
+			Labels map[string]string `json:"labels,omitempty"`
+		}
+		keys := engine.Series()
+		entries := make([]seriesEntry, 0, len(keys))
+		for _, k := range keys {
+			entries = append(entries, seriesEntry{Name: k.Name, Labels: k.Labels})
+		}
+		writeJSON(w, http.StatusOK, struct {
+			Status string        `json:"status"`
+			Data   []seriesEntry `json:"data"`
+		}{Status: "success", Data: entries})
+	}
+}
+
+func pointValues(points []storage.Point) [][2]any {
+	values := make([][2]any, 0, len(points))
+	for _, p := range points {
+		values = append(values, [2]any{float64(p.Time.UnixNano()) / 1e9, formatFloat(p.Value)})
+	}
+	return values
+}
+
+func formatFloat(v float64) string {
+	return strconv.FormatFloat(v, 'g', -1, 64)
+}
+
 // parseTime accepts a Unix timestamp (seconds, may be fractional) or RFC3339
 // — the same two formats Prometheus's own HTTP API accepts.
 func parseTime(s string) (time.Time, error) {
 	if s == "" {
-		return time.Time{}, &timeParseError{"start/end is required"}
+		return time.Time{}, &apiError{"start/end is required"}
 	}
 	if sec, err := strconv.ParseFloat(s, 64); err == nil {
 		return time.Unix(0, int64(sec*float64(time.Second))), nil
@@ -113,9 +170,23 @@ func parseTime(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339, s)
 }
 
-type timeParseError struct{ msg string }
+// parseTier maps the tier query param to a storage.Tier; empty defaults to raw.
+func parseTier(s string) (storage.Tier, error) {
+	switch s {
+	case "", "raw":
+		return storage.TierRaw, nil
+	case "minute":
+		return storage.TierMinute, nil
+	case "hour":
+		return storage.TierHour, nil
+	default:
+		return storage.TierRaw, &apiError{"invalid tier " + s + ": want raw, minute, or hour"}
+	}
+}
 
-func (e *timeParseError) Error() string { return e.msg }
+type apiError struct{ msg string }
+
+func (e *apiError) Error() string { return e.msg }
 
 // parseLabels parses "k1=v1,k2=v2" into an exact-match filter map.
 func parseLabels(s string) (map[string]string, error) {
@@ -126,7 +197,7 @@ func parseLabels(s string) (map[string]string, error) {
 	for _, pair := range strings.Split(s, ",") {
 		k, v, ok := strings.Cut(pair, "=")
 		if !ok {
-			return nil, &timeParseError{"expected k=v, got " + pair}
+			return nil, &apiError{"expected k=v, got " + pair}
 		}
 		match[k] = v
 	}

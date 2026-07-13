@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -93,7 +94,8 @@ func TestQueryRangeFiltersByLabels(t *testing.T) {
 
 func TestRingBufferWrapsAtCapacity(t *testing.T) {
 	dir := t.TempDir()
-	// retention 4s / interval 1s = capacity 4
+	// retention 4s / interval 1s -> maxPointsPerChunk clamps to 1, so the
+	// fixed 8-chunk ring (chunksPerSeries) holds at most 8 one-second slots.
 	s, err := Open(dir, 4*time.Second)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -103,7 +105,7 @@ func TestRingBufferWrapsAtCapacity(t *testing.T) {
 	key := SeriesKey{Name: "wrap"}
 	interval := time.Second
 	base := time.Now().Truncate(time.Second)
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		s.Append(key, interval, base.Add(time.Duration(i)*interval), float64(i))
 	}
 
@@ -111,12 +113,12 @@ func TestRingBufferWrapsAtCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryRange: %v", err)
 	}
-	// Only the last `capacity` writes should still be present after wraparound.
-	if len(results[0].Points) > 4 {
-		t.Fatalf("expected wraparound to cap points at capacity, got %d", len(results[0].Points))
+	// Only the last chunksPerSeries writes should still be present after wraparound.
+	if len(results[0].Points) > chunksPerSeries {
+		t.Fatalf("expected wraparound to cap points at %d, got %d", chunksPerSeries, len(results[0].Points))
 	}
 	last := results[0].Points[len(results[0].Points)-1]
-	if last.Value != 9 {
+	if last.Value != 19 {
 		t.Errorf("expected most recent point to survive wraparound, got value %v", last.Value)
 	}
 }
@@ -158,6 +160,60 @@ func TestSeriesKeyStringIsOrderIndependent(t *testing.T) {
 	b := SeriesKey{Name: "m", Labels: map[string]string{"y": "2", "x": "1"}}
 	if a.String() != b.String() {
 		t.Errorf("expected identical canonical strings, got %q vs %q", a.String(), b.String())
+	}
+}
+
+// TestSeriesSurvivesExternalDirDeletion guards against a real bug found in
+// manual testing: if a series' on-disk directory disappears out from under
+// a running Store (e.g. external cleanup while the process is live),
+// QueryRange used to return a hard error instead of treating it as "no
+// data," and the next Append never recreated the directory.
+func TestSeriesSurvivesExternalDirDeletion(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir, time.Hour)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	key := SeriesKey{Name: "cpu"}
+	now := time.Now()
+	if err := s.Append(key, time.Second, now, 1); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	// Simulate the series directory vanishing externally.
+	sr := s.byKey[key.String()]
+	if err := os.RemoveAll(sr.dir); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+
+	results, err := s.QueryRange("cpu", nil, now.Add(-time.Minute), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("QueryRange should tolerate a missing series dir, got error: %v", err)
+	}
+	if len(results) != 1 || len(results[0].Points) != 0 {
+		t.Fatalf("expected 1 series with 0 points after dir deletion, got %+v", results)
+	}
+
+	// The next Append should self-heal: recreate the directory and succeed.
+	// The in-memory open-chunk buffer survives the directory's deletion, so
+	// both the pre-deletion and post-heal points come back once the chunk
+	// is rewritten to the recreated directory.
+	later := now.Add(time.Second)
+	if err := s.Append(key, time.Second, later, 2); err != nil {
+		t.Fatalf("Append after dir deletion should self-heal, got error: %v", err)
+	}
+
+	results, err = s.QueryRange("cpu", nil, now.Add(-time.Minute), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("QueryRange after self-heal: %v", err)
+	}
+	if len(results) != 1 || len(results[0].Points) != 2 {
+		t.Fatalf("expected the self-healed append to be queryable, got %+v", results)
+	}
+	if results[0].Points[0].Value != 1 || results[0].Points[1].Value != 2 {
+		t.Errorf("expected both pre- and post-deletion points to survive, got %+v", results[0].Points)
 	}
 }
 

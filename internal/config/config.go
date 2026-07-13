@@ -10,23 +10,43 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-// Duration wraps time.Duration so it can be parsed from a YAML string like "15s" or "2h".
+// Duration wraps time.Duration so it can be parsed from a YAML string like
+// "15s" or "2h" — or "7d"/"365d" (retention is naturally day/year-scale, and
+// Go's own time.ParseDuration has no unit above "h").
 type Duration time.Duration
 
 func (d Duration) String() string {
 	return time.Duration(d).String()
 }
 
+var dayOrYearUnit = regexp.MustCompile(`^(\d+)([dy])$`)
+
 func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 	var s string
 	if err := value.Decode(&s); err != nil {
 		return err
 	}
+
+	if m := dayOrYearUnit.FindStringSubmatch(s); m != nil {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			return fmt.Errorf("invalid duration %q: %w", s, err)
+		}
+		hoursPerUnit := 24
+		if m[2] == "y" {
+			hoursPerUnit = 24 * 365
+		}
+		*d = Duration(time.Duration(n*hoursPerUnit) * time.Hour)
+		return nil
+	}
+
 	parsed, err := time.ParseDuration(s)
 	if err != nil {
 		return fmt.Errorf("invalid duration %q: %w", s, err)
