@@ -22,7 +22,7 @@ Gotchas beyond what the Makefile itself documents:
 - **Before claiming a change works**: run `make vet test`. If you touch the on-disk storage format, also re-measure disk footprint against [DESIGN/03](DESIGN/03_design_storage.md) §3.3 — a regression there is easy to miss with unit tests alone, since they use tiny fixtures rather than the metric-count/retention scale the format is designed for.
 - **If a change touches `web/static/js`**: `go test`/`curl` smoke-testing doesn't execute client-side JS. Verify with an actual browser (see servicedesk's `CLAUDE.md` for the Playwright-based pattern to copy).
 - **Before ending a task**: if the change affects behavior, update whichever of `DESIGN.md`/`DESIGN/`, `ARCHITECTURE.md`, or `RELEASE.md`/`RELEASE/vX.Y.Z.md` it touches — don't wait to be asked for each one separately. Close out with a one-line git commit message; the user commits it themselves.
-- **CI/CD is tag-driven** (push a `v*` tag), not push-to-main-driven — see `.github/workflows/` and [TEMPLATE.md](TEMPLATE.md) §3 for the rationale.
+- **CI/CD is tag-driven** (push a `v*` tag), not push-to-main-driven — see `.github/workflows/`.
 - Do not run `make release`, `make bump`, or any git push/commit/tag command yourself unless the user explicitly asks — releasing is the user's call.
 
 ## Conventions worth knowing before you're surprised by them

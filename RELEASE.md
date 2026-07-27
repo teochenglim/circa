@@ -7,6 +7,7 @@ Newest first.
 | Version | Theme | Status |
 | :--- | :--- | :--- |
 | [v1.1.0](RELEASE/v1.1.0.md) | Windows (and other non-Linux/non-macOS) system collection | Not started |
+| [v1.0.1](RELEASE/v1.0.1.md) | Security patch: CVE-2026-33186 (`google.golang.org/grpc`) | **Shipped** |
 | [v1.0.0](RELEASE/v1.0.0.md) | Hardening, sizing calculator, packaging, docs | **Shipped** |
 | [v0.7.0](RELEASE/v0.7.0.md) | Federation & self-expose (backup CDC to Iceberg, federation search, `/metrics`, self-metrics) | **Shipped** |
 | [v0.6.0](RELEASE/v0.6.0.md) | Netdata-style dashboard (zero-config system overview) | **Shipped** |
