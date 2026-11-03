@@ -7,6 +7,7 @@ Newest first.
 | Version | Theme | Status |
 | :--- | :--- | :--- |
 | [v1.1.0](RELEASE/v1.1.0.md) | Windows (and other non-Linux/non-macOS) system collection | Not started |
+| [v1.0.5](RELEASE/v1.0.5.md) | Security patch: `go-jose/v4` CVE-2026-116587, all direct deps + Go 1.27.3 bumped | **Shipped** |
 | [v1.0.4](RELEASE/v1.0.4.md) | Security patch: `github.com/klauspost/compress` CVE-2026-63209 | **Shipped** |
 | [v1.0.3](RELEASE/v1.0.3.md) | Security patch: `golang.org/x/net` CVE-2026-78669, Go 1.27.2 | **Shipped** |
 | [v1.0.2](RELEASE/v1.0.2.md) | Security patch: `apache/thrift`, `golang.org/x/crypto`, `google.golang.org/grpc` CVEs | **Shipped** |
